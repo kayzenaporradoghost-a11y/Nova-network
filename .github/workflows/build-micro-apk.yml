@@ -1,0 +1,258 @@
+name: Build NETWORK APK
+# Trigger build after speech callback fix
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'micro_apk/**'
+      - '.github/workflows/build-micro-apk.yml'
+  workflow_dispatch:
+concurrency:
+  group: network-apk-main
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.NETWORK_CHECKOUT_TOKEN || github.token }}
+      - name: Set up Java 21 for Android Gradle and lint
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Preparar voz neural feminina em português brasileiro
+        shell: bash
+        run: |
+          set -euo pipefail
+          VOICE_DIR="$GITHUB_WORKSPACE/micro_apk/assets/network_voice"
+          mkdir -p "$VOICE_DIR"
+          cd "$VOICE_DIR"
+          curl -fL --retry 5 --retry-delay 2 "https://huggingface.co/Phoonnx/pipertts_pt-BR_dii/resolve/main/dii_pt-BR.onnx" -o dii_pt-BR.onnx
+          curl -fL --retry 5 --retry-delay 2 "https://huggingface.co/Phoonnx/pipertts_pt-BR_dii/resolve/main/dii_pt-BR.onnx.json" -o dii_pt-BR.onnx.json
+          curl -fL --retry 5 --retry-delay 2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/espeak-ng-data.tar.bz2" -o espeak-ng-data.tar.bz2
+          python -m pip install --upgrade pip
+          python -m pip install onnx==1.17.0
+          python - <<'PY'
+          import json
+          import onnx
+          from pathlib import Path
+
+          root = Path(".")
+          model_path = root / "dii_pt-BR.onnx"
+          config = json.loads((root / "dii_pt-BR.onnx.json").read_text(encoding="utf-8"))
+          with (root / "tokens.txt").open("w", encoding="utf-8") as out:
+              for symbol, ids in config["phoneme_id_map"].items():
+                  out.write(f"{symbol} {ids[0]}\n")
+          model = onnx.load(str(model_path))
+          metadata = {
+              "model_type": "vits",
+              "comment": "piper",
+              "language": "pt_BR",
+              "voice": config["espeak"]["voice"],
+              "has_espeak": 1,
+              "n_speakers": config["num_speakers"],
+              "sample_rate": config["audio"]["sample_rate"],
+          }
+          for key, value in metadata.items():
+              item = model.metadata_props.add()
+              item.key = key
+              item.value = str(value)
+          onnx.save(model, str(model_path))
+          print("Voice model converted for sherpa-onnx.")
+          PY
+          tar -xjf espeak-ng-data.tar.bz2
+          rm -f espeak-ng-data.tar.bz2 dii_pt-BR.onnx.json
+          cd "$GITHUB_WORKSPACE/micro_apk"
+          while IFS= read -r directory; do
+            relative="${directory#./}"
+            printf '    - %s/\n' "$relative" >> pubspec.yaml
+          done < <(find assets/network_voice -mindepth 1 -type d | sort)
+          test -s assets/network_voice/dii_pt-BR.onnx
+          test -s assets/network_voice/tokens.txt
+          test -d assets/network_voice/espeak-ng-data
+          du -sh assets/network_voice
+      - name: Preparar projeto Android
+        working-directory: micro_apk
+        run: flutter create --platforms=android --project-name micro_apk .
+      - name: Configurar Android API 26 para inferência GGUF
+        working-directory: micro_apk
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path("android/app/build.gradle.kts")
+          text = path.read_text()
+          text, count = re.subn(r"minSdk\s*=\s*flutter\.minSdkVersion", "minSdk = 26", text)
+          if count == 0:
+              text, count = re.subn(r"minSdk\s*=\s*\d+", "minSdk = 26", text)
+          if count == 0:
+              raise SystemExit("Não foi possível configurar minSdk 26 no Gradle.")
+          path.write_text(text)
+          print("Android minSdk 26 configurado para llama_flutter_android.")
+          PY
+      - name: Instalar dependências
+        working-directory: micro_apk
+        run: flutter pub get
+      - name: Forçar Android API 36 no app e plugins
+        working-directory: micro_apk
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          roots = [Path("android"), Path.home() / ".pub-cache"]
+          changed = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob("build.gradle*"):
+                  try:
+                      lines = path.read_text().splitlines()
+                  except (OSError, UnicodeError):
+                      continue
+                  output = []
+                  touched = False
+                  for line in lines:
+                      stripped = line.lstrip()
+                      indent = line[:len(line) - len(stripped)]
+                      if stripped.startswith("compileSdkVersion"):
+                          output.append(indent + ("compileSdkVersion = 36" if "=" in stripped else "compileSdkVersion 36"))
+                          touched = True
+                      elif stripped.startswith("compileSdk") and not stripped.startswith("compileSdkVersion"):
+                          output.append(indent + ("compileSdk = 36" if "=" in stripped else "compileSdk 36"))
+                          touched = True
+                      else:
+                          output.append(line)
+                  if touched:
+                      path.write_text("\n".join(output) + "\n")
+                      changed.append(str(path))
+          app = Path("android/app/build.gradle.kts")
+          if not app.exists():
+              raise SystemExit("ERRO: arquivo Gradle do aplicativo não encontrado")
+          lines = app.read_text().splitlines()
+          for index, line in enumerate(lines):
+              if line.lstrip().startswith("compileSdk"):
+                  lines[index] = "    compileSdk = 36"
+                  break
+          else:
+              raise SystemExit("ERRO: declaração compileSdk não encontrada no app")
+          app.write_text("\n".join(lines) + "\n")
+          if "compileSdk = 36" not in app.read_text():
+              raise SystemExit("ERRO: compileSdk 36 não confirmado")
+          print("Módulos Gradle atualizados:", len(changed))
+          for item in changed:
+              print(item)
+          print("App compileSdk=36 confirmado")
+          PY
+      - name: Validar provedores de texto
+        working-directory: micro_apk
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          chat = Path("lib/services/blackchat_service.dart").read_text()
+          agent = Path("lib/services/tool_agent_service.dart").read_text()
+          required = [
+              "https://ai-gateway.kilo.ai/api/v1",
+              "https://api.llm7.io/v1",
+              "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+              "https://oai.aihorde.net/v1",
+              "nvidia/nemotron-3.5-super-vl:free",
+              "koboldcpp/G4-MeroMero-26B-A4B-it-uncensored-heretic",
+              "kilo-auto/free",
+              "inclusionai/ling-3.2-flash:free",
+              "liquid/lfm-3-1.7b:free",
+              "koboldcpp/Cydonia-24B-v4zg-Q4_K_M",
+          ]
+          for item in required:
+              if item not in chat + agent:
+                  raise SystemExit(f"Provedor da cadeia gratuita ausente: {item}")
+          if "const host = 'ai-gateway.kilo.ai'" not in agent:
+              raise SystemExit("Rota padrão Kilo não encontrada no agente.")
+          if "_chatWithFreeProviderChain" not in agent:
+              raise SystemExit("Corrida de provedores não encontrada no agente.")
+          for item in ["'stream': true", "'max_tokens': 1200", "'temperature': 0.2",
+              "connectTimeout': const Duration(seconds: 8)",
+              "responseTimeout': const Duration(seconds: 180)",
+              "connectTimeout': const Duration(seconds: 15)",
+              "responseTimeout': const Duration(seconds: 600)"]:
+              if item not in agent:
+                  raise SystemExit(f"Configuração da corrida ausente: {item}")
+          if "useParallelKiloHordeRace = true" not in agent:
+              raise SystemExit("A corrida Kilo + Horde não está definida como rota padrão.")
+          app = Path("lib/main.dart").read_text()
+          if "String _executionMode='automatic';" not in app:
+              raise SystemExit("O agente não inicia no modo automático com todas as ferramentas disponíveis.")
+          if "arruma|arrume|arrumar" not in agent or "estude|estuda|estudar" not in agent:
+              raise SystemExit("O detector não reconhece pedidos comuns de auditoria e correção em português.")
+          print("Corrida Kilo Nemotron Vision + Horde G4 validada.")
+          PY
+      - name: Analisar código
+        working-directory: micro_apk
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Testar NETWORK
+        working-directory: micro_apk
+        run: flutter test
+      - name: Instalar NDK com tentativas de recuperação
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager não encontrado em $SDKMANAGER"
+            exit 1
+          fi
+          for attempt in 1 2 3 4; do
+            echo "Instalando NDK 28.2.13676358 (tentativa $attempt/4)"
+            if "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install "ndk;28.2.13676358" </dev/null; then
+              if [ -f "$SDK_ROOT/ndk/28.2.13676358/source.properties" ]; then
+                echo "NDK instalado e validado."
+                exit 0
+              fi
+              echo "Instalação terminou sem source.properties; limpando pacote incompleto."
+              rm -rf "$SDK_ROOT/ndk/28.2.13676358"
+            else
+              echo "sdkmanager falhou na tentativa $attempt."
+            fi
+            sleep $((attempt * 10))
+          done
+          echo "Falha ao baixar NDK após quatro tentativas."
+          exit 1
+      - name: Compilar APK ARM64
+        working-directory: micro_apk
+        env:
+          NETWORK_AUTH_URL: ${{ vars.NETWORK_AUTH_URL }}
+        run: flutter build apk --release --target-platform android-arm64 --dart-define=GITHUB_AUTH_URL="$NETWORK_AUTH_URL" --obfuscate --split-debug-info=build/symbols
+      - name: Verificar APK antes da publicação
+        shell: bash
+        run: test -s micro_apk/build/app/outputs/flutter-apk/app-release.apk
+      - name: Publicar APK como artefato (opcional; não bloquear o Release se a cota estiver cheia)
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: NETWORK-APK
+          path: micro_apk/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+      - name: Publicar APK instalável no GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: network-apk-${{ github.run_number }}
+          name: NETWORK APK ${{ github.run_number }}
+          generate_release_notes: false
+          files: micro_apk/build/app/outputs/flutter-apk/app-release.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

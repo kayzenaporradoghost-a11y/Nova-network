@@ -1,0 +1,61 @@
+name: NETWORK Security Audit
+
+on:
+  push:
+    paths:
+      - 'micro_apk/**'
+      - '.github/workflows/security-audit.yml'
+  pull_request:
+    paths:
+      - 'micro_apk/**'
+      - '.github/workflows/security-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  static-and-dependency-audit:
+    name: Static analysis and dependency audit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan source, dependencies and configuration with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          format: table
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Set up Python for Semgrep
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep
+        run: python -m pip install --disable-pip-version-check semgrep
+
+      - name: Static code analysis
+        run: semgrep scan --config auto --exclude-rule java.android.security.exported_activity.exported_activity --error micro_apk
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve Flutter dependencies
+        working-directory: micro_apk
+        run: flutter pub get
+
+      - name: Validate dependency graph
+        working-directory: micro_apk
+        run: flutter pub deps --json > /tmp/network-flutter-dependencies.json
