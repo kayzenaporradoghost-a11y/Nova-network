@@ -442,7 +442,7 @@ class MainActivity : FlutterActivity() {
                         result.error("PHONE_ACTION", e.message ?: "Falha ao localizar elemento.", null)
                     }
                 }
-                "phone_screen_read", "phone_tap", "phone_scroll", "phone_long_press", "phone_swipe", "phone_type_text", "phone_press_back", "phone_open_app", "phone_open_app_window", "phone_window_capabilities", "phone_window_list", "phone_window_read", "phone_window_tap_text", "phone_window_type_text", "phone_window_scroll" -> {
+                "phone_screen_read", "phone_tap", "phone_scroll", "phone_long_press", "phone_swipe", "phone_type_text", "phone_press_back", "phone_home", "phone_recents", "phone_notifications", "phone_quick_settings", "phone_power_dialog", "phone_lock_screen", "phone_take_screenshot", "phone_split_screen", "phone_open_app", "phone_open_app_window", "phone_window_capabilities", "phone_window_list", "phone_window_read", "phone_window_tap_text", "phone_window_type_text", "phone_window_scroll" -> {
                     @Suppress("UNCHECKED_CAST")
                     val args = call.arguments as? Map<String, Any?> ?: emptyMap()
                     try {
