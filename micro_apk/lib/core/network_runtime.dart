@@ -703,7 +703,7 @@ class ToolAgentService {
               throw FormatException('Toque por coordenadas exige x e y válidos, positivos e observados na tela atual.');
             }
             result = await _channel.invokeMethod<dynamic>('phone_tap',{'x':x.toDouble(),'y':y.toDouble()})
-                .timeout(const Duration(seconds:3));
+                .timeout(const Duration(milliseconds:1600));
             break;
           case 'long_press':
             final x = args['x'], y = args['y'];
@@ -712,7 +712,7 @@ class ToolAgentService {
             }
             final duration = ((args['duration'] as num?)?.toInt() ?? 900).clamp(250,3000);
             result = await _channel.invokeMethod<dynamic>('phone_long_press',{'x':x.toDouble(),'y':y.toDouble(),'duration':duration})
-                .timeout(const Duration(seconds:4));
+                .timeout(const Duration(seconds:3));
             break;
           case 'swipe':
             final x1=args['x1'], y1=args['y1'], x2=args['x2'], y2=args['y2'];
@@ -723,7 +723,7 @@ class ToolAgentService {
             result = await _channel.invokeMethod<dynamic>('phone_swipe',{
               'x1':(x1 as num).toDouble(),'y1':(y1 as num).toDouble(),
               'x2':(x2 as num).toDouble(),'y2':(y2 as num).toDouble(),'duration':duration
-            }).timeout(const Duration(seconds:4));
+            }).timeout(const Duration(seconds:3));
             break;
           case 'tap_text':
             final target = args['text']?.toString() ?? '';
@@ -734,19 +734,19 @@ class ToolAgentService {
               throw StateError('Ação crítica retirada do lote. Observe a tela e decida/autorize separadamente.');
             }
             // Um elemento ausente nunca pode deixar a automação pendurada.
-            result = await _channel.invokeMethod<dynamic>('phone_tap_text',{'text':target,'timeoutMs':4500})
-                .timeout(const Duration(seconds:5));
+            result = await _channel.invokeMethod<dynamic>('phone_tap_text',{'text':target,'timeoutMs':1800})
+                .timeout(const Duration(milliseconds:2400));
             break;
           case 'wait_for_text':
-            result = await _channel.invokeMethod<dynamic>('phone_wait_for_text',{'text':args['text']?.toString() ?? '', 'timeoutMs':5000})
-                .timeout(const Duration(seconds:6));
+            result = await _channel.invokeMethod<dynamic>('phone_wait_for_text',{'text':args['text']?.toString() ?? '', 'timeoutMs':((args['timeoutMs'] as num?)?.toInt() ?? 1800).clamp(250,3500)})
+                .timeout(Duration(milliseconds:(((args['timeoutMs'] as num?)?.toInt() ?? 1800).clamp(250,3500)+500));
             break;
           case 'type_text':
             result = await _channel.invokeMethod<dynamic>('phone_type_text',{'text':args['text']?.toString() ?? ''});
             break;
           case 'focus_input':
-            result = await _channel.invokeMethod<dynamic>('phone_focus_input',{'timeoutMs':2500})
-                .timeout(const Duration(seconds:3));
+            result = await _channel.invokeMethod<dynamic>('phone_focus_input',{'timeoutMs':1200})
+                .timeout(const Duration(milliseconds:1800));
             break;
           case 'scroll':
             result = await _channel.invokeMethod<dynamic>('phone_scroll',{'direction':args['direction']?.toString() ?? 'down'});
