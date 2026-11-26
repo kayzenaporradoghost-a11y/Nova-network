@@ -324,7 +324,7 @@ class ToolAgentService {
           throw HttpException('Vexa AI chat HTTP ${response.statusCode}: $body');
         }
         final content = StringBuffer();
-        await for (final line in response.stream.timeout(const Duration(seconds:20)).transform(utf8.decoder).transform(const LineSplitter())) {
+        await for (final line in response.stream.timeout(const Duration(seconds:60)).transform(utf8.decoder).transform(const LineSplitter())) {
           if (_stopped) throw StateError('Execução interrompida');
           if (!line.startsWith('data:')) continue;
           final eventText = line.substring(5).trim();
@@ -359,7 +359,7 @@ class ToolAgentService {
         ..headers.addAll({'Content-Type':'application/json','Accept':'text/event-stream, application/json'})
         ..body = jsonEncode(payload);
       if (token.isNotEmpty) request.headers['Authorization'] = 'Bearer '+token;
-      final response = await client.send(request).timeout(const Duration(seconds:10));
+      final response = await client.send(request).timeout(const Duration(seconds:60));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final body = await response.stream.bytesToString().timeout(const Duration(seconds:20));
         final retryAfter = response.headers['retry-after'];
@@ -380,7 +380,7 @@ class ToolAgentService {
       }
       final content = StringBuffer();
       final toolCalls = <int,Map<String,dynamic>>{};
-      await for (final line in response.stream.transform(utf8.decoder).transform(const LineSplitter()).timeout(const Duration(seconds:20))) {
+      await for (final line in response.stream.transform(utf8.decoder).transform(const LineSplitter()).timeout(const Duration(seconds:60))) {
         if (_stopped) throw StateError('Execução interrompida');
         if (!line.startsWith('data:')) continue;
         final payload = line.substring(5).trim();
@@ -477,7 +477,7 @@ class ToolAgentService {
           break;
         default:
           explanation = error is TimeoutException
-              ? 'o provedor excedeu o limite de 90 segundos'
+              ? 'a API demorou mais de 60 segundos para conectar ou enviar novos dados; aumentamos a tolerância total da tarefa para 180 segundos'
               : 'falha de conexão ou resposta do provedor';
       }
       if (error is TimeoutException || error is SocketException ||
