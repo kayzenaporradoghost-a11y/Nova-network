@@ -801,7 +801,16 @@ class NetworkAccessibilityService : AccessibilityService() {
         val overlay = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)
         val display = resources.displayMetrics
         val openWindows = appWindowSummaries()
-        return "Android API=${Build.VERSION.SDK_INT}; freeform=$freeform; freeform_enabled=$freeformEnabled; low_ram=$lowRam; overlay_permission=$overlay; split_screen_candidate=${Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !lowRam}; display=${display.widthPixels}x${display.heightPixels}; accessible_app_windows=${openWindows.size}; packages=${openWindows.mapNotNull { it["package"] }.distinct().joinToString(",")}. O fabricante e o sistema definem quantas janelas independentes são aceitas."
+        val api = Build.VERSION.SDK_INT
+        val samsung = Build.MANUFACTURER.equals("samsung", ignoreCase = true)
+        val activeWindowAutomation = true // AccessibilityService + window tree/gestures are available on API 29.
+        val backgroundVirtualDisplay = api >= Build.VERSION_CODES.S
+        val strategy = when {
+            samsung && api == Build.VERSION_CODES.Q -> "ANDROID_10_SAMSUNG: AccessibilityService controls the active app; independent popup must be requested through One UI Recent Apps and verified in windows. If popup controls are not accessible, continue in the active app window."
+            api == Build.VERSION_CODES.Q -> "ANDROID_10: control the active app with AccessibilityService; independent windows depend on OEM freeform/multi-window support."
+            else -> "Use AccessibilityService and verified OEM multi-window/freeform support."
+        }
+        return "Android API=$api; samsung=$samsung; active_window_accessibility=$activeWindowAutomation; background_virtual_display=$backgroundVirtualDisplay; strategy=$strategy; freeform=$freeform; freeform_enabled=$freeformEnabled; low_ram=$lowRam; overlay_permission=$overlay; split_screen_candidate=${api >= Build.VERSION_CODES.N && !lowRam}; display=${display.widthPixels}x${display.heightPixels}; accessible_app_windows=${openWindows.size}; packages=${openWindows.mapNotNull { it[\"package\"] }.distinct().joinToString(\",\")}. O fabricante e o sistema definem quantas janelas independentes são aceitas."
     }
 
     private fun isAlreadyInMultiWindowLayout(): Boolean {
