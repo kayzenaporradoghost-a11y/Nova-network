@@ -1098,15 +1098,17 @@ class ToolAgentService {
     while (true) {
       if (_stopped) throw StateError('Execução interrompida pelo usuário.');
       inferenceRounds++;
-      if (inferenceRounds > 16) {
+      // Tarefas complexas podem exigir muitas iterações. Não interrompa em 16
+      // chamadas; mantenha checkpoints e só aplique um teto alto de segurança.
+      if (inferenceRounds > 128) {
         await _screenSubscription?.cancel();
         _screenSubscription = null;
         await _markCheckpointPaused();
         try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
         AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
-        return 'Pausado após 16 rodadas para evitar um ciclo interminável. O histórico foi salvo e pode ser retomado.';
+        return 'A tarefa foi pausada após 128 ciclos de segurança. O histórico foi preservado para continuar.';
       }
-      onProgress('A IA está analisando o estado atual');
+      onProgress('A IA está analisando o estado atual · ciclo $inferenceRounds');
       // Eventos de tela atualizam o contexto, mas não cancelam HTTP em andamento:
       // cancelar a inferência desperdiça tokens, conexões e limites do provedor.
       if (_latestScreenEvent != null && _lastScreenRevisionSent != _screenRevision) {
@@ -1216,6 +1218,10 @@ class ToolAgentService {
           )));
           if (_stopped) throw StateError('Execução interrompida pelo usuário.');
           messages.addAll(results);
+          final failedReads = results.where((item) => item['content']?.toString().contains('"error"') == true).length;
+          if (failedReads > 0) {
+            messages.add({'role':'system','content':'RECUPERAÇÃO AUTOMÁTICA: $failedReads ferramenta(s) retornaram erro. Analise a mensagem exata, escolha uma correção concreta (argumentos, pré-condição, ferramenta alternativa ou nova leitura) e tente novamente quando for seguro. Não repita ações com efeito colateral cujo resultado seja incerto; inspecione o estado primeiro. Não declare a tarefa concluída enquanto o objetivo não estiver verificado.'});
+          }
           await _saveCheckpoint(prompt, messages);
           continue;
         }
@@ -1234,6 +1240,10 @@ class ToolAgentService {
         );
         if (_stopped) throw StateError('Execução interrompida pelo usuário');
         messages.add(toolResult);
+        if (toolResult['content']?.toString().contains('"error"') == true) {
+          messages.add({'role':'system','content':'RECUPERAÇÃO AUTOMÁTICA: a ferramenta $toolName falhou. Leia o erro exato, identifique e corrija a causa (argumentos, pré-condição, permissão ou ferramenta alternativa) e continue a tarefa. Não repita cegamente uma ação com efeito colateral se o resultado for incerto; primeiro inspecione o estado. Não declare sucesso sem verificar o resultado real.'});
+          onProgress('Falha em $toolName · diagnosticando e tentando corrigir');
+        }
         await _saveCheckpoint(prompt, messages);
       }
     }
