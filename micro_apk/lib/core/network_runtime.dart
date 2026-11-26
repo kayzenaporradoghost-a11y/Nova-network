@@ -637,19 +637,19 @@ class ToolAgentService {
               throw StateError('Ação crítica retirada do lote. Observe a tela e decida/autorize separadamente.');
             }
             // Um elemento ausente nunca pode deixar a automação pendurada.
-            result = await _channel.invokeMethod<dynamic>('phone_tap_text',{'text':target,'timeoutMs':1800})
-                .timeout(const Duration(milliseconds:2500));
+            result = await _channel.invokeMethod<dynamic>('phone_tap_text',{'text':target,'timeoutMs':4500})
+                .timeout(const Duration(seconds:5));
             break;
           case 'wait_for_text':
-            result = await _channel.invokeMethod<dynamic>('phone_wait_for_text',{'text':args['text']?.toString() ?? '', 'timeoutMs':2500})
-                .timeout(const Duration(seconds:3));
+            result = await _channel.invokeMethod<dynamic>('phone_wait_for_text',{'text':args['text']?.toString() ?? '', 'timeoutMs':5000})
+                .timeout(const Duration(seconds:6));
             break;
           case 'type_text':
             result = await _channel.invokeMethod<dynamic>('phone_type_text',{'text':args['text']?.toString() ?? ''});
             break;
           case 'focus_input':
-            result = await _channel.invokeMethod<dynamic>('phone_focus_input',{'timeoutMs':1200})
-                .timeout(const Duration(seconds:2));
+            result = await _channel.invokeMethod<dynamic>('phone_focus_input',{'timeoutMs':2500})
+                .timeout(const Duration(seconds:3));
             break;
           case 'scroll':
             result = await _channel.invokeMethod<dynamic>('phone_scroll',{'direction':args['direction']?.toString() ?? 'down'});
@@ -1000,7 +1000,7 @@ class ToolAgentService {
       '\nVocê é o agente executor do NETWORK. Cumpra o pedido diretamente, sem planos longos nem perguntas desnecessárias. Use ferramentas quando forem necessárias e verifique o resultado real; nunca invente sucesso.'+
       '\nDecida a próxima ação com base no resultado mais recente. Não repita ações concluídas. Para tarefas simples, aja sem consultar especialistas; consulte no máximo 1 a 2 somente quando isso realmente reduzir risco ou melhorar uma tarefa complexa.'+
       '\nPERCEPÇÃO ANDROID: comece pela ação solicitada usando phone_batch e a resolução de nome/pacote já disponível. NÃO faça auditoria de permissões nem inventário completo em toda tarefa. Consulte phone_list_apps somente se o nome do app for desconhecido/ambíguo ou se o usuário pedir a lista; consulte phone_android_sensitivity na primeira configuração, quando uma ação falhar por permissão ou quando o usuário pedir auditoria. Use a tela que phone_batch já retorna; só chame phone_screen_read novamente se o resultado não trouxer tela útil ou houver ambiguidade. Use OCR autorizado apenas quando a Acessibilidade não expuser o conteúdo necessário. Observe eventos e aja sobre os elementos atuais. Se faltar permissão, explique qual capacidade falta e peça ao usuário para habilitar; nunca tente conceder automaticamente. Nunca diga que viu conteúdo protegido ou inacessível.'+
-      '\nAndroid: use exclusivamente phone_batch para ações que alteram a interface. NÃO espere o aplicativo terminar de carregar. Abra e tente imediatamente os elementos que já estiverem visíveis. Toque por texto usando a árvore de Acessibilidade atual; se o alvo ainda não existir, aguarde apenas o evento desse elemento por até 1,8 segundo e então releia a tela. Campo de entrada: tente foco imediato; se ainda não existir, não fique esperando vários segundos — releia o estado e continue quando aparecer. Agrupe passos mecânicos em uma chamada, sem uma nova inferência entre cada toque. A tela pode continuar carregando enquanto você trabalha; use o primeiro estado útil. Ações explicitamente solicitadas pelo usuário, como enviar uma mensagem com destinatário e texto claros, estão autorizadas e não devem gerar pedido de confirmação redundante. Nunca envie mensagem não solicitada. Para pagamentos, transferências, compras, exclusões e concessões de permissões, pare e peça autorização específica. Nunca opere um app em segundo plano com toques globais.'+
+      '\nAndroid: use exclusivamente phone_batch para ações que alteram a interface. NÃO espere o aplicativo terminar de carregar. Abra e tente imediatamente os elementos que já estiverem visíveis. Toque por texto usando a árvore de Acessibilidade atual; se o alvo ainda não existir, aguarde apenas o evento desse elemento por até 4,5 segundos e então releia a tela. Campo de entrada: tente foco imediato; se ainda não existir, não fique esperando vários segundos — releia o estado e continue quando aparecer. Agrupe passos mecânicos em uma chamada, sem uma nova inferência entre cada toque. A tela pode continuar carregando enquanto você trabalha; use o primeiro estado útil. Ações explicitamente solicitadas pelo usuário, como enviar uma mensagem com destinatário e texto claros, estão autorizadas e não devem gerar pedido de confirmação redundante. Nunca envie mensagem não solicitada. Para pagamentos, transferências, compras, exclusões e concessões de permissões, pare e peça autorização específica. Nunca opere um app em segundo plano com toques globais.'+
       '\nSamsung pop-up: confirme a janela independente com phone_window_list e opere somente pelas ferramentas phone_window_*; não use gestos globais para janela em segundo plano.'+
       '\nWeb, VPS, GitHub e arquivos: escolha a ferramenta adequada, execute o necessário e confira a saída. Ações destrutivas exigem confirmação. Respeite o modo de acesso.'+
       '\nResponda em português brasileiro, de forma direta. Modo de execução: '+executionMode+'. Modo de acesso: '+accessMode+'.';
