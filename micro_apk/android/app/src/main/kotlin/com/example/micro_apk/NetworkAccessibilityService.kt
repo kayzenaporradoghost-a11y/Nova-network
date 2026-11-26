@@ -353,6 +353,14 @@ class NetworkAccessibilityService : AccessibilityService() {
             "phone_focus_input" -> focusInput()
             "phone_type_text" -> typeText(args["text"]?.toString() ?: "")
             "phone_press_back" -> performGlobalAction(GLOBAL_ACTION_BACK)
+            "phone_home" -> performGlobalAction(GLOBAL_ACTION_HOME)
+            "phone_recents" -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+            "phone_notifications" -> performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)
+            "phone_quick_settings" -> performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+            "phone_power_dialog" -> performGlobalAction(GLOBAL_ACTION_POWER_DIALOG)
+            "phone_lock_screen" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN) else false
+            "phone_take_screenshot" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT) else false
+            "phone_split_screen" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN) else false
             "phone_open_app" -> openApp(args["package"]?.toString() ?: "")
             "phone_open_app_window" -> openAppWindow(args["package"]?.toString() ?: "")
             "phone_window_capabilities" -> windowCapabilities()
