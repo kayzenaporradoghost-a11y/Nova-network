@@ -144,7 +144,7 @@ class BlackChatService {
   static const tokenKey = 'network_v2_ai_token';
   static const promptKey = 'network_v2_ai_prompt';
   static const defaultBaseUrl = 'https://ai-gateway.kilo.ai/api/v1';
-  static const defaultModel = 'nvidia/nemotron-3.5-super-vl:free';
+  static const defaultModel = 'kilo-auto/free';
   Future<void> saveConfig({required String apiKey,required String endpoint,required String modelName,required String prompt}) async {
     final u = Uri.tryParse(endpoint.trim());
     if (u == null || u.scheme != 'https' || u.host.isEmpty || modelName.trim().isEmpty) throw FormatException('Endpoint HTTPS e modelo são obrigatórios');
@@ -154,7 +154,15 @@ class BlackChatService {
     await _secure.write(key:promptKey,value:prompt.trim());
   }
   Future<String> get endpoint async => await _secure.read(key:endpointKey) ?? defaultBaseUrl;
-  Future<String> get model async => await _secure.read(key:modelKey) ?? defaultModel;
+  Future<String> get model async {
+    final saved = await _secure.read(key:modelKey);
+    // Migra automaticamente a configuração antiga de teste NVIDIA para o roteador
+    // gratuito do Kilo, que escolhe modelos free disponíveis dinamicamente.
+    if (saved == null || saved.trim().isEmpty || saved == 'nvidia/nemotron-3.5-super-vl:free') {
+      return 'kilo-auto/free';
+    }
+    return saved;
+  }
   Future<String> get apiKey async => await _secure.read(key:tokenKey) ?? '';
   Future<String> get systemPrompt async => await _secure.read(key:promptKey) ?? 'Você é NETWORK, uma IA agente autônoma de uso geral. Você decide como cumprir cada pedido, quais ferramentas usar, em que ordem, quando observar novamente a tela, quando mudar de estratégia e quando a tarefa está realmente concluída. NÃO monte planos fechados antecipadamente nem delegue decisões a regras fixas do executor. Para Android, todas as ações que alteram a interface devem ser executadas por phone_batch, em uma chamada com até 10 passos mecânicos previsíveis. Não use ferramentas individuais de abrir, tocar, focar, digitar, rolar ou voltar. Use nova inferência apenas para ler uma tela nova, quando o resultado mudar a decisão, surgir ambiguidade, houver erro ou for necessária confirmação sensível. Não tente adivinhar alvos que não foram observados. A phone_batch para no primeiro erro e devolve a tela atual; então reavalie. Nunca agrupe envio/publicação, pagamentos, exclusões, permissões, confirmações ou efeitos irreversíveis. Pode executar várias chamadas independentes juntas quando forem realmente independentes. Se uma ação falhar, analise o erro e o estado atual, escolha outra estratégia e continue sem repetir ações já concluídas. Não invente sucesso: verifique o efeito real. Responda em português brasileiro. Para automação Android, observe a tela com acessibilidade/OCR, interprete os elementos e escolha ações com base no estado atual. Nunca espere o aplicativo carregar por completo se os elementos necessários já estiverem disponíveis. PERCEPÇÃO ANDROID OBRIGATÓRIA: antes de automação, consulte phone_android_sensitivity e phone_list_apps quando o estado/permissões/aplicativos forem relevantes. Cruze permissões concedidas/negadas/especiais, capacidade de captura de tela (autorização temporária), serviço de Acessibilidade, app ativo e inventário de aplicativos. Use nomes humanos ou pacote ao abrir; nunca invente pacote. Se nome ambíguo, mostre candidatos e não abra um aleatório. Depois de abrir, leia phone_screen_read; se elementos estiverem ausentes/incompletos, solicite phone_screen_ocr_capture somente quando a captura autorizada estiver disponível, e verifique eventos/tela após cada ação. Observe novamente após mudanças de tela e confirme o efeito real. Não alegue visão de telas protegidas ou dados que o Android não expõe. Para controlar o celular, a Acessibilidade do NETWORK precisa estar ativada. Quando o usuário pedir explicitamente para enviar uma mensagem e destinatário e texto estiverem claros, execute sem pedir confirmação redundante. Pergunte apenas se destinatário ou texto estiverem ambíguos. Nunca envie mensagens que não foram solicitadas.';
   Future<void> stop() async {}
@@ -459,8 +467,13 @@ class ToolAgentService {
           break;
         case 500:
         case 502:
-        case 503:
           explanation = 'o provedor ou a infraestrutura upstream está temporariamente indisponível';
+          break;
+        case 503:
+          final lowerBody = errorText.toLowerCase();
+          explanation = lowerBody.contains('insufficient balance') || lowerBody.contains('credit') || lowerBody.contains('trial') || lowerBody.contains('plan')
+              ? 'o modelo/provedor escolhido esgotou créditos ou cota de teste; use kilo-auto/free para selecionar um modelo gratuito disponível'
+              : 'o provedor ou a infraestrutura upstream está temporariamente indisponível'; 
           break;
         default:
           explanation = error is TimeoutException
