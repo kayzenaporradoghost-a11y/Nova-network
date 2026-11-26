@@ -1298,6 +1298,30 @@ class ToolAgentService {
         final call = Map<String,dynamic>.from(raw as Map);
         final function = Map<String,dynamic>.from(call['function'] as Map);
         final toolName = function['name']?.toString() ?? 'ferramenta';
+        final rawArgs = function['arguments'];
+        final signature = toolName + '|' + (rawArgs is String ? rawArgs.trim() : jsonEncode(rawArgs ?? const {}));
+        var identicalRecentCalls = 0;
+        for (final historyMessage in messages) {
+          final historyCalls = (historyMessage['tool_calls'] as List?) ?? const [];
+          for (final historyRaw in historyCalls) {
+            try {
+              final historyCall = Map<String,dynamic>.from(historyRaw as Map);
+              final historyFunction = Map<String,dynamic>.from(historyCall['function'] as Map);
+              final historyName = historyFunction['name']?.toString() ?? '';
+              final historyArgs = historyFunction['arguments'];
+              final historySignature = historyName + '|' + (historyArgs is String ? historyArgs.trim() : jsonEncode(historyArgs ?? const {}));
+              if (historySignature == signature) identicalRecentCalls++;
+            } catch (_) {}
+          }
+        }
+        if (identicalRecentCalls >= 2) {
+          final callId = call['id']?.toString() ?? '';
+          messages.add({'role':'tool','tool_call_id':callId,'content':jsonEncode({'error':'LOOP_GUARD: esta chamada idêntica já foi executada duas vezes. Não execute novamente. Leia o estado atual, tente uma estratégia diferente ou encerre informando o bloqueio.'})});
+          messages.add({'role':'system','content':'LOOP GUARD: a chamada $toolName com os mesmos argumentos foi bloqueada após duas execuções anteriores. Você DEVE mudar a estratégia e observar o estado real; não repita a ferramenta, nem narre que vai repetir. Se for Android, leia a tela atual e tente uma alternativa distinta apenas uma vez; se não houver alternativa viável, pare e informe o bloqueio específico.'});
+          onProgress('Repetição idêntica bloqueada; exigindo estratégia alternativa');
+          await _saveCheckpoint(prompt, messages);
+          continue;
+        }
         onProgress('IA decidiu executar: '+toolName);
         final toolResult = await _runToolCall(
           raw,
