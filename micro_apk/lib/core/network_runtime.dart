@@ -489,6 +489,7 @@ class ToolAgentService {
     required List<Map<String,dynamic>> tools,
     required void Function(String) onTextChunk,
     required void Function(String) onProgress,
+    int retryCount = 0,
   }) async {
     // Nunca encaminhe silenciosamente conversas, arquivos ou dados do usuário
     // para um provedor terceiro que não foi escolhido nas configurações.
@@ -508,6 +509,25 @@ class ToolAgentService {
       final errorText = error.toString();
       final match = RegExp(r'IA HTTP (\d{3})').firstMatch(errorText);
       final status = match == null ? 0 : int.tryParse(match.group(1)!) ?? 0;
+      final transientNetworkError = error is TimeoutException ||
+          error is SocketException || error is http.ClientException ||
+          error is HandshakeException || error is TlsException;
+      final transientHttpError = status == 408 || status == 425 ||
+          status == 429 || status == 500 || status == 502 ||
+          status == 503 || status == 504;
+      if (retryCount < 2 && (transientNetworkError || transientHttpError)) {
+        final previousClient = _sessionClient;
+        _sessionClient = http.Client();
+        if (identical(_activeClient, previousClient)) _activeClient = null;
+        previousClient.close();
+        final retryAfterMatch = RegExp(r'Retry-After[: ]+(\\d+)',caseSensitive:false).firstMatch(errorText);
+        final retryAfterSeconds = retryAfterMatch == null ? null : int.tryParse(retryAfterMatch.group(1)!);
+        final delayMs = retryAfterSeconds != null ? (retryAfterSeconds * 1000).clamp(500, 10000) : 700 * (retryCount + 1);
+        onProgress('Falha temporária na API; nova tentativa automática ' + (retryCount + 1).toString() + '/2 em ' + (delayMs / 1000).toStringAsFixed(1) + 's');
+        await Future.delayed(Duration(milliseconds: delayMs));
+        if (_stopped) throw StateError('Execução interrompida pelo usuário.');
+        return _streamTurnWithRetry(endpoint:endpoint,model:model,token:token,messages:messages,tools:tools,onTextChunk:onTextChunk,onProgress:onProgress,retryCount:retryCount + 1);
+      }
       String explanation;
       switch (status) {
         case 400:
@@ -1082,6 +1102,7 @@ class ToolAgentService {
       '\nAPRENDIZADO DE APLICATIVOS: quando a tela identificar um pacote Android, consulte app_knowledge_search para esse pacote e a tarefa atual antes de tentar um fluxo conhecido. Ao concluir com sucesso, confira a tela final e grave somente etapas que você realmente observou usando app_knowledge_save com verified=true. Nunca transforme um palpite em habilidade; não guarde mensagens, contatos, senhas ou códigos. As habilidades são dicas: sempre revalide cada alvo na tela atual.'+
       '\nAndroid: use exclusivamente phone_batch para ações que alteram a interface. NÃO espere o aplicativo terminar de carregar. Abra e tente imediatamente os elementos que já estiverem visíveis. Prefira toque por texto usando a árvore de Acessibilidade. Se o controle não tiver rótulo acessível, use tap/swipe/long_press por coordenadas somente quando a tela atual/OCR fornecer posição clara; nunca adivinhe coordenadas. Não use toque por coordenadas para enviar mensagens, pagar, comprar, excluir ou conceder permissões sem autorização específica. Se o alvo ainda não existir, aguarde o evento desse elemento por até 4,5 segundos e então releia a tela. Campo de entrada: tente foco imediato; se ainda não existir, não fique esperando vários segundos — releia o estado e continue quando aparecer. Agrupe passos mecânicos em uma chamada, sem uma nova inferência entre cada toque. A tela pode continuar carregando enquanto você trabalha; use o primeiro estado útil. Ações explicitamente solicitadas pelo usuário, como enviar uma mensagem com destinatário e texto claros, estão autorizadas e não devem gerar pedido de confirmação redundante. Nunca envie mensagem não solicitada. Para pagamentos, transferências, compras, exclusões e concessões de permissões, pare e peça autorização específica. Nunca opere um app em segundo plano com toques globais.'+
       '\nSamsung pop-up: confirme a janela independente com phone_window_list e opere somente pelas ferramentas phone_window_*; não use gestos globais para janela em segundo plano.'+
+      '\nDESEMPENHO: quando precisar de várias consultas independentes e somente de leitura, solicite-as no mesmo turno para o executor paralelizar. Não paralelize ações que alterem estado, navegação Android, comandos SSH/shell ou operações com dependência entre si. Evite repetir buscas, inventários e leituras que já estejam válidos no contexto.'+
       '\nWeb, VPS, GitHub e arquivos: escolha a ferramenta adequada, execute o necessário e confira a saída. Ações destrutivas exigem confirmação. Respeite o modo de acesso.'+
       '\nResponda em português brasileiro, de forma direta. Modo de execução: '+executionMode+'. Modo de acesso: '+accessMode+'.';
     final messages = resumeMessages != null
@@ -1223,8 +1244,12 @@ class ToolAgentService {
           final call = Map<String,dynamic>.from(raw as Map);
           final function = Map<String,dynamic>.from(call['function'] as Map);
           const safeIndependentReads = {
-            'memory_list', 'memory_search', 'web_search', 'web_open',
-            'ssh_list', 'github_repositories',
+            'memory_list', 'memory_search', 'app_knowledge_search',
+            'app_knowledge_list', 'web_search', 'web_open', 'ssh_list',
+            'github_repositories', 'phone_list_apps',
+            'phone_android_sensitivity', 'phone_screen_read',
+            'phone_window_capabilities', 'phone_window_list',
+            'phone_window_read', 'phone_wait_for_text',
           };
           return safeIndependentReads.contains(function['name']);
         } catch (_) {
