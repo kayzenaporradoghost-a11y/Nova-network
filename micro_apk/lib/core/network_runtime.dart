@@ -212,9 +212,38 @@ class ToolAgentService {
     try { return Map<String,dynamic>.from(jsonDecode(raw) as Map); } catch (_) { return null; }
   }
 
-  Future<void> _saveCheckpoint(String prompt, List<Map<String,dynamic>> messages) async {
+  Future<void> _saveCheckpoint(
+    String prompt,
+    List<Map<String,dynamic>> messages, {
+    String phase = 'executing',
+    int? inferenceRounds,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_pendingTaskKey, jsonEncode({'prompt':prompt,'messages':messages,'status':'running','updatedAt':DateTime.now().toIso8601String()}));
+    final now = DateTime.now().toIso8601String();
+    Map<String,dynamic> previous = {};
+    final raw = prefs.getString(_pendingTaskKey);
+    if (raw != null && raw.isNotEmpty) {
+      try { previous = Map<String,dynamic>.from(jsonDecode(raw) as Map); } catch (_) {}
+    }
+    // Preserve one stable task identity across pauses and process restarts.
+    final sameTask = previous['prompt'] == prompt &&
+        previous['status'] != 'completed' &&
+        previous['status'] != 'cancelled';
+    final taskId = sameTask && previous['taskId'] != null
+        ? previous['taskId'].toString()
+        : 'network-${DateTime.now().microsecondsSinceEpoch}';
+    await prefs.setString(_pendingTaskKey, jsonEncode({
+      'schemaVersion': 2,
+      'taskId': taskId,
+      'prompt': prompt,
+      'messages': messages,
+      'status': 'running',
+      'phase': phase,
+      'inferenceRounds': inferenceRounds ?? previous['inferenceRounds'] ?? 0,
+      'createdAt': sameTask ? previous['createdAt'] ?? now : now,
+      'updatedAt': now,
+      'lastProgressAt': now,
+    }));
   }
 
   Future<void> _markCheckpointPaused() async {
@@ -1095,6 +1124,9 @@ class ToolAgentService {
     messages.add({'role':'system','content':'REGRA ANDROID: phone_batch é a única ferramenta para alterar a interface. Agrupe até 10 passos mecânicos previsíveis. Abrir aplicativos, navegar, focar campos e digitar não exigem confirmação extra. Se o usuário solicitou explicitamente uma mensagem e o destinatário/texto estão claros, enviar essa mensagem faz parte da autorização dada pelo usuário: não peça uma segunda confirmação. Não envie conteúdo diferente nem para outro destinatário. Pagamentos, transferências, compras, exclusões e permissões sempre exigem autorização específica.'});
     var inferenceRounds = 0;
     var lastKnowledgePackage = '';
+    // Persist the user's mission before the first network request. A crash or
+    // Android process kill during the very first inference must not erase it.
+    await _saveCheckpoint(prompt, messages, phase: 'ready', inferenceRounds: 0);
     while (true) {
       if (_stopped) throw StateError('Execução interrompida pelo usuário.');
       inferenceRounds++;
@@ -1109,6 +1141,7 @@ class ToolAgentService {
         return 'A tarefa foi pausada após 128 ciclos de segurança. O histórico foi preservado para continuar.';
       }
       onProgress('A IA está analisando o estado atual · ciclo $inferenceRounds');
+      await _saveCheckpoint(prompt, messages, phase: 'inference', inferenceRounds: inferenceRounds);
       // Eventos de tela atualizam o contexto, mas não cancelam HTTP em andamento:
       // cancelar a inferência desperdiça tokens, conexões e limites do provedor.
       if (_latestScreenEvent != null && _lastScreenRevisionSent != _screenRevision) {
