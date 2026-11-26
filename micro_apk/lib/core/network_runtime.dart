@@ -520,7 +520,7 @@ class ToolAgentService {
         _sessionClient = http.Client();
         if (identical(_activeClient, previousClient)) _activeClient = null;
         previousClient.close();
-        final retryAfterMatch = RegExp(r'Retry-After[: ]+(\\d+)',caseSensitive:false).firstMatch(errorText);
+        final retryAfterMatch = RegExp(r'Aguarde pelo menos (\d+)',caseSensitive:false).firstMatch(errorText);
         final retryAfterSeconds = retryAfterMatch == null ? null : int.tryParse(retryAfterMatch.group(1)!);
         final delayMs = retryAfterSeconds != null ? (retryAfterSeconds * 1000).clamp(500, 10000) : 700 * (retryCount + 1);
         onProgress('Falha temporária na API; nova tentativa automática ' + (retryCount + 1).toString() + '/2 em ' + (delayMs / 1000).toStringAsFixed(1) + 's');
