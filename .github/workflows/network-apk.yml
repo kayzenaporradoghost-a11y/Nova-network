@@ -15,9 +15,9 @@ permissions:
   contents: write
 
 concurrency:
-  # Cada SHA tem seu próprio grupo para que uma execução antiga enfileirada
-  # não bloqueie o APK do commit atual.
-  group: network-apk-${{ github.workflow }}-${{ github.sha }}
+  # Apenas a compilação mais recente da branch principal deve consumir runner.
+  # Um push novo cancela builds antigos e evita gastar cota em APKs obsoletos.
+  group: network-apk-main
   cancel-in-progress: true
 
 jobs:
