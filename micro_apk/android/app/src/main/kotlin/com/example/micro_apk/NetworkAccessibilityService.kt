@@ -159,7 +159,7 @@ class NetworkAccessibilityService : AccessibilityService() {
             }
         }
         pendingWindowRead = PendingWindowRead(packageName, callback, timeout, requireContentChange)
-        mainHandler.postDelayed(timeout, 8000L)
+        mainHandler.postDelayed(timeout, 15000L)
     }
 
     private fun resolvePendingWindowRead(event: AccessibilityEvent? = null): Boolean {
