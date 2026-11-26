@@ -31,21 +31,32 @@ class MicroRuntimeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val state = getSharedPreferences("network_runtime", MODE_PRIVATE)
+        // START_STICKY pode recriar o serviço com Intent nulo após pressão de memória.
+        // Restaura a notificação de tarefa ativa sem iniciar um segundo agente Dart.
+        if (intent == null && state.getBoolean("agent_keep_alive", false)) {
+            agentKeepAlive = true
+            startForeground(NOTIFICATION_ID, notification("NETWORK mantém a tarefa em execução"))
+            return START_STICKY
+        }
         when (intent?.action) {
             ACTION_STOP -> {
                 process?.destroy()
                 process = null
                 agentKeepAlive = false
+                state.edit().putBoolean("agent_keep_alive", false).apply()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
             }
             ACTION_AGENT_START -> {
                 agentKeepAlive = true
+                state.edit().putBoolean("agent_keep_alive", true).apply()
                 startForeground(NOTIFICATION_ID, notification("NETWORK está executando sua tarefa"))
             }
             ACTION_AGENT_STOP -> {
                 agentKeepAlive = false
+                state.edit().putBoolean("agent_keep_alive", false).apply()
                 if (process == null) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
