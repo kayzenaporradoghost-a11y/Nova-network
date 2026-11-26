@@ -493,7 +493,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
             ? failure
             : previous.contains(error.toString())
                 ? previous
-                : '$previous\\n\\n$f​ailure'.replaceAll('f​ailure', 'failure');
+                : '$previous\\n\\n$failure';
       });
     } finally {
       if (mounted) setState(() { _running = false; _activity = 'SISTEMA PRONTO'; });
