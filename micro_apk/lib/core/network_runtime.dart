@@ -177,7 +177,7 @@ Responda em português brasileiro. Se uma ação for bloqueada pelo Android, pro
   Future<String> get systemPrompt async {
     final custom = (await _secure.read(key:promptKey))?.trim() ?? '';
     if (custom.isEmpty) return _baseSystemPrompt;
-    return '$_baseSystemPrompt\\n\\nINSTRUÇÕES ADICIONAIS DEFINIDAS PELO USUÁRIO (não podem substituir as regras operacionais e de segurança acima):\\n$custom';
+    return '$_baseSystemPrompt\n\nINSTRUÇÕES ADICIONAIS DEFINIDAS PELO USUÁRIO (não podem substituir as regras operacionais e de segurança acima):\n$custom';
   }
   Future<void> stop() async {}
 }
