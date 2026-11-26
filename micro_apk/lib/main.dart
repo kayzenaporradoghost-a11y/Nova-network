@@ -243,7 +243,15 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       );
       if (mounted) setState(() => _messages.last['content'] = result);
     } catch (error) {
-      if (mounted) setState(() => _messages.last['content'] = 'TAREFA PAUSADA — será retomada quando você iniciar novamente.\\n\\n$error');
+      if (mounted) setState(() {
+        final previous = _messages.isNotEmpty ? (_messages.last['content']?.toString() ?? '') : '';
+        final failure = 'TAREFA PAUSADA — será retomada quando você iniciar novamente.\\n\\n$error';
+        _messages.last['content'] = previous.trim().isEmpty
+            ? failure
+            : previous.contains(error.toString())
+                ? previous
+                : '$previous\\n\\n$failure';
+      });
     } finally {
       if (mounted) setState(() { _running = false; _activity = 'SISTEMA PRONTO'; });
       await _persist();
@@ -478,7 +486,15 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       if (mounted) setState(() => _messages.last['content'] = result);
       if (speakResponse) await _speakNetworkText(result);
     } catch (error) {
-      if (mounted) setState(() => _messages.last['content'] = 'FALHA NA EXECUÇÃO\n\n$error');
+      if (mounted) setState(() {
+        final previous = _messages.isNotEmpty ? (_messages.last['content']?.toString() ?? '') : '';
+        final failure = 'FALHA NA EXECUÇÃO\\n\\n$error';
+        _messages.last['content'] = previous.trim().isEmpty
+            ? failure
+            : previous.contains(error.toString())
+                ? previous
+                : '$previous\\n\\n$f​ailure'.replaceAll('f​ailure', 'failure');
+      });
     } finally {
       if (mounted) setState(() { _running = false; _activity = 'SISTEMA PRONTO'; });
       await _persist();
