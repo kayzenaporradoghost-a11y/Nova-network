@@ -200,6 +200,20 @@ jobs:
           done
           echo "Falha ao baixar NDK após quatro tentativas."
           exit 1
+      - name: Add all ML Kit OCR script dependencies for R8
+        working-directory: micro_apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> android/app/build.gradle.kts <<'EOF'
+
+          dependencies {
+              implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+              implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
+              implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+              implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+          }
+          EOF
       - name: Compilar APK ARM64
         working-directory: micro_apk
         env:
