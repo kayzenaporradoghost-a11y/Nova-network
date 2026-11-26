@@ -214,7 +214,20 @@ class ToolAgentService {
 
   Future<void> _saveCheckpoint(String prompt, List<Map<String,dynamic>> messages) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_pendingTaskKey, jsonEncode({'prompt':prompt,'messages':messages,'updatedAt':DateTime.now().toIso8601String()}));
+    await prefs.setString(_pendingTaskKey, jsonEncode({'prompt':prompt,'messages':messages,'status':'running','updatedAt':DateTime.now().toIso8601String()}));
+  }
+
+  Future<void> _markCheckpointPaused() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingTaskKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final checkpoint = Map<String,dynamic>.from(jsonDecode(raw) as Map);
+      checkpoint['status'] = 'paused';
+      checkpoint['pausedAt'] = DateTime.now().toIso8601String();
+      checkpoint['updatedAt'] = DateTime.now().toIso8601String();
+      await prefs.setString(_pendingTaskKey, jsonEncode(checkpoint));
+    } catch (_) {}
   }
 
   Future<void> _clearCheckpoint() async {
@@ -225,7 +238,8 @@ class ToolAgentService {
     _stopped = true;
     for (final client in _specialistClients.toList()) { client.close(); }
     _specialistClients.clear();
-    await _clearCheckpoint();
+    // Interrupção manual pausa a tarefa: mantém prompt e histórico para retomada.
+    await _markCheckpointPaused();
     try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
     _activeClient?.close();
     _activeClient = null;
@@ -1087,10 +1101,10 @@ class ToolAgentService {
       if (inferenceRounds > 16) {
         await _screenSubscription?.cancel();
         _screenSubscription = null;
-        await _clearCheckpoint();
+        await _markCheckpointPaused();
         try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
         AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
-        return 'Parei com segurança após 16 rodadas de decisão da IA para evitar um ciclo interminável. As ações já concluídas foram preservadas. Diga “continue” para retomar a partir do estado atual.';
+        return 'Pausado após 16 rodadas para evitar um ciclo interminável. O histórico foi salvo e pode ser retomado.';
       }
       onProgress('A IA está analisando o estado atual');
       // Eventos de tela atualizam o contexto, mas não cancelam HTTP em andamento:
