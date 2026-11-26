@@ -440,7 +440,7 @@ class ToolAgentService {
         messages: messages,
         tools: tools,
         onTextChunk: onTextChunk,
-      ).timeout(const Duration(seconds: 90));
+      ).timeout(const Duration(seconds: 180));
     } catch (error) {
       if (_stopped) rethrow;
       final errorText = error.toString();
@@ -477,7 +477,7 @@ class ToolAgentService {
           break;
         default:
           explanation = error is TimeoutException
-              ? 'a API demorou mais de 60 segundos para conectar ou enviar novos dados; aumentamos a tolerância total da tarefa para 180 segundos'
+              ? 'a inferência ultrapassou o limite de 180 segundos; verifique a conexão e a disponibilidade do modelo gratuito'
               : 'falha de conexão ou resposta do provedor';
       }
       if (error is TimeoutException || error is SocketException ||
