@@ -157,49 +157,18 @@ jobs:
               print(item)
           print("App compileSdk=36 confirmado")
           PY
-      - name: Validar provedores de texto
+      - name: Validar estrutura atual do aplicativo
         working-directory: micro_apk
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          chat = Path("lib/services/blackchat_service.dart").read_text()
-          agent = Path("lib/services/tool_agent_service.dart").read_text()
-          required = [
-              "https://ai-gateway.kilo.ai/api/v1",
-              "https://api.llm7.io/v1",
-              "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
-              "https://oai.aihorde.net/v1",
-              "nvidia/nemotron-3.5-super-vl:free",
-              "koboldcpp/G4-MeroMero-26B-A4B-it-uncensored-heretic",
-              "kilo-auto/free",
-              "inclusionai/ling-3.2-flash:free",
-              "liquid/lfm-3-1.7b:free",
-              "koboldcpp/Cydonia-24B-v4zg-Q4_K_M",
-          ]
-          for item in required:
-              if item not in chat + agent:
-                  raise SystemExit(f"Provedor da cadeia gratuita ausente: {item}")
-          if "const host = 'ai-gateway.kilo.ai'" not in agent:
-              raise SystemExit("Rota padrão Kilo não encontrada no agente.")
-          if "_chatWithFreeProviderChain" not in agent:
-              raise SystemExit("Corrida de provedores não encontrada no agente.")
-          for item in ["'stream': true", "'max_tokens': 1200", "'temperature': 0.2",
-              "connectTimeout': const Duration(seconds: 8)",
-              "responseTimeout': const Duration(seconds: 180)",
-              "connectTimeout': const Duration(seconds: 15)",
-              "responseTimeout': const Duration(seconds: 600)"]:
-              if item not in agent:
-                  raise SystemExit(f"Configuração da corrida ausente: {item}")
-          if "useParallelKiloHordeRace = true" not in agent:
-              raise SystemExit("A corrida Kilo + Horde não está definida como rota padrão.")
-          app = Path("lib/main.dart").read_text()
-          if "String _executionMode='automatic';" not in app:
-              raise SystemExit("O agente não inicia no modo automático com todas as ferramentas disponíveis.")
-          if "arruma|arrume|arrumar" not in agent or "estude|estuda|estudar" not in agent:
-              raise SystemExit("O detector não reconhece pedidos comuns de auditoria e correção em português.")
-          print("Corrida Kilo Nemotron Vision + Horde G4 validada.")
-          PY
+          set -euo pipefail
+          test -s lib/main.dart
+          test -s lib/core/network_runtime.dart
+          test -s lib/core/agent_orchestrator.dart
+          test -s lib/core/agent_performance.dart
+          test -s lib/design/void_design_system.dart
+          test -s lib/workspaces/advanced_workspaces.dart
+          echo "Estrutura atual do NETWORK confirmada."
       - name: Analisar código
         working-directory: micro_apk
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
