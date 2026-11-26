@@ -123,13 +123,14 @@ class NetworkAccessibilityService : AccessibilityService() {
         if (currentPackage == packageName) { callback("APP_JA_ATIVO\\n${readScreen()}"); return }
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         if (launch == null) { callback("ERRO: aplicativo não instalado ou sem atividade inicializável: $packageName"); return }
+        // Register the expected package BEFORE launching, otherwise a fast window event
+        // can arrive before the pending read exists and the agent will inspect the old app.
+        waitForPackageWindow(packageName, callback)
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         try {
-            // Dispara a abertura e devolve imediatamente; a tela nova chega por eventos.
             startActivity(launch)
-            callback("APP_LAUNCH_DISPATCHED: abertura solicitada. Use os eventos de Acessibilidade para agir assim que os elementos aparecerem.")
         } catch (error: Exception) {
-            callback("ERRO AO ABRIR APLICATIVO: ${error.message}")
+            cancelPendingWindowRead("ERRO AO ABRIR APLICATIVO: ${error.message}")
         }
     }
     private fun openBrowserSearch(query: String, callback: (String) -> Unit) {
