@@ -101,7 +101,7 @@ class MainActivity : FlutterActivity() {
         return inventory
     }
 
-    private fun openAppByName(appQuery: String): Map<String, Any?> {
+    private fun resolveAppByName(appQuery: String): Map<String, Any?> {
         if (appQuery.isBlank() || appQuery.length > 200) return mapOf("success" to false, "error" to "Nome ou pacote inválido.")
         val apps = installedAppsInventory().filter { it["launchable"] == true }
         val exactPackage = apps.firstOrNull { (it["package"] as String).equals(appQuery, true) }
@@ -128,16 +128,10 @@ class MainActivity : FlutterActivity() {
         }
         val chosen = matches.single()
         val packageId = chosen["package"] as String
-        val launch = packageManager.getLaunchIntentForPackage(packageId)
-            ?: return mapOf("success" to false, "error" to "O app foi listado, mas não tem atividade de abertura.", "name" to chosen["name"], "package" to packageId)
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return try {
-            startActivity(launch)
-            mapOf("success" to true, "dispatched" to true, "name" to chosen["name"], "package" to packageId,
-                "message" to "Abertura enviada ao Android; confirme a tela ativa por Acessibilidade.")
-        } catch (error: Exception) {
-            mapOf("success" to false, "error" to "Falha ao abrir: ${error.message}", "name" to chosen["name"], "package" to packageId)
+        if (packageManager.getLaunchIntentForPackage(packageId) == null) {
+            return mapOf("success" to false, "error" to "O app foi listado, mas não tem atividade de abertura.", "name" to chosen["name"], "package" to packageId)
         }
+        return mapOf("success" to true, "name" to chosen["name"], "package" to packageId)
     }
 
     private fun androidSensitivitySnapshot(): Map<String, Any?> {
@@ -270,7 +264,28 @@ class MainActivity : FlutterActivity() {
                 }
                 "phone_android_sensitivity" -> result.success(androidSensitivitySnapshot())
                 "phone_list_apps" -> result.success(installedAppsInventory())
-                "open_app_resolved" -> result.success(openAppByName(call.argument<String>("app")?.trim().orEmpty()))
+                "open_app_resolved" -> {
+                    val resolved = resolveAppByName(call.argument<String>("app")?.trim().orEmpty())
+                    val packageId = resolved["package"]?.toString().orEmpty()
+                    if (resolved["success"] != true || packageId.isBlank()) {
+                        result.success(resolved)
+                    } else {
+                        // Do not report success merely because startActivity was dispatched.
+                        // Wait until Accessibility sees the requested app's real window.
+                        NetworkAccessibilityService.openAppAndRead(packageId) { screen ->
+                            val opened = screen.startsWith("APP_ABERTO_TELA_DETECTADA") ||
+                                screen.startsWith("APP_JA_ATIVO")
+                            result.success(mapOf(
+                                "success" to opened,
+                                "dispatched" to true,
+                                "name" to resolved["name"],
+                                "package" to packageId,
+                                "screen" to screen,
+                                "error" to if (opened) null else screen
+                            ))
+                        }
+                    }
+                }
                 "launch_app" -> {
                     val packageName = call.argument<String>("package")?.trim().orEmpty()
                     if (packageName.isBlank() || packageName.length > 200) {
