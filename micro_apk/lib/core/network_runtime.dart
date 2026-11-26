@@ -739,7 +739,7 @@ class ToolAgentService {
             break;
           case 'wait_for_text':
             result = await _channel.invokeMethod<dynamic>('phone_wait_for_text',{'text':args['text']?.toString() ?? '', 'timeoutMs':((args['timeoutMs'] as num?)?.toInt() ?? 1800).clamp(250,3500)})
-                .timeout(Duration(milliseconds:(((args['timeoutMs'] as num?)?.toInt() ?? 1800).clamp(250,3500)+500));
+                .timeout(Duration(milliseconds:(((args['timeoutMs'] as num?)?.toInt() ?? 1800).clamp(250,3500)+500)));
             break;
           case 'type_text':
             result = await _channel.invokeMethod<dynamic>('phone_type_text',{'text':args['text']?.toString() ?? ''});
