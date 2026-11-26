@@ -810,7 +810,7 @@ class NetworkAccessibilityService : AccessibilityService() {
             api == Build.VERSION_CODES.Q -> "ANDROID_10: control the active app with AccessibilityService; independent windows depend on OEM freeform/multi-window support."
             else -> "Use AccessibilityService and verified OEM multi-window/freeform support."
         }
-        return "Android API=$api; samsung=$samsung; active_window_accessibility=$activeWindowAutomation; background_virtual_display=$backgroundVirtualDisplay; strategy=$strategy; freeform=$freeform; freeform_enabled=$freeformEnabled; low_ram=$lowRam; overlay_permission=$overlay; split_screen_candidate=${api >= Build.VERSION_CODES.N && !lowRam}; display=${display.widthPixels}x${display.heightPixels}; accessible_app_windows=${openWindows.size}; packages=${openWindows.mapNotNull { it[\"package\"] }.distinct().joinToString(\",\")}. O fabricante e o sistema definem quantas janelas independentes são aceitas."
+        return "Android API=$api; samsung=$samsung; active_window_accessibility=$activeWindowAutomation; background_virtual_display=$backgroundVirtualDisplay; strategy=$strategy; freeform=$freeform; freeform_enabled=$freeformEnabled; low_ram=$lowRam; overlay_permission=$overlay; split_screen_candidate=${api >= Build.VERSION_CODES.N && !lowRam}; display=${display.widthPixels}x${display.heightPixels}; accessible_app_windows=${openWindows.size}; packages=${openWindows.mapNotNull { it["package"] }.distinct().joinToString(",")}. O fabricante e o sistema definem quantas janelas independentes são aceitas."
     }
 
     private fun isAlreadyInMultiWindowLayout(): Boolean {
