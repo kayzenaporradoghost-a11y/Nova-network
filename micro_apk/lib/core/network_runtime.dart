@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import 'agent_web_tools.dart';
 import 'agent_orchestrator.dart';
 import 'agent_performance.dart';
+import 'app_knowledge.dart';
 
 class VpsTarget {
   const VpsTarget({required this.name, required this.host, required this.username, this.port = 22});
@@ -188,6 +189,7 @@ class ToolAgentService {
   final SshManager ssh;
   final GithubService github;
   final NetworkWebTools _web = NetworkWebTools();
+  final AppKnowledgeStore _appKnowledge = AppKnowledgeStore();
   http.Client _sessionClient = http.Client();
   http.Client? _activeClient;
   final Set<http.Client> _specialistClients = <http.Client>{};
@@ -242,6 +244,9 @@ class ToolAgentService {
     {'type':'function','function':{'name':'memory_list','description':'Lista as notas persistentes do usuário no NETWORK. Consulte antes de repetir decisões ou iniciar trabalhos em andamento.','parameters':{'type':'object','properties':{}}}},
     {'type':'function','function':{'name':'memory_search','description':'Busca contexto, decisões e histórico nas notas persistentes do NETWORK.','parameters':{'type':'object','properties':{'query':{'type':'string'}},'required':['query']}}},
     {'type':'function','function':{'name':'memory_save','description':'Salva uma decisão, preferência técnica ou estado importante para continuar em conversas futuras. Nunca salve senhas, tokens ou segredos.','parameters':{'type':'object','properties':{'title':{'type':'string'},'content':{'type':'string'}},'required':['title','content']}}},
+    {'type':'function','function':{'name':'app_knowledge_search','description':'Busca fluxos aprendidos e verificados para um aplicativo Android específico. Consulte antes de navegar em um app conhecido; as etapas são dicas, não macros cegas.','parameters':{'type':'object','properties':{'package':{'type':'string'},'task':{'type':'string'}},'required':['package','task']}}},
+    {'type':'function','function':{'name':'app_knowledge_list','description':'Lista fluxos de aplicativos que o NETWORK já aprendeu e verificou neste aparelho.','parameters':{'type':'object','properties':{}}}},
+    {'type':'function','function':{'name':'app_knowledge_save','description':'Guarda um fluxo de aplicativo para reutilização futura. Só chame depois de observar a tela final e confirmar que a tarefa realmente foi concluída. Informe pacote, nome, objetivo e etapas curtas observadas; nunca salve senhas, códigos ou dados privados.','parameters':{'type':'object','properties':{'package':{'type':'string'},'app_name':{'type':'string'},'task':{'type':'string'},'steps':{'type':'array','items':{'type':'string'},'minItems':1,'maxItems':12},'verified':{'type':'boolean'}},'required':['package','app_name','task','steps','verified']}}},
     {'type':'function','function':{'name':'web_search','description':'Pesquisa na web em tempo real. Retorna títulos, URLs e trechos de fontes públicas. Use para fatos atuais, documentação, comparação e investigação.','parameters':{'type':'object','properties':{'query':{'type':'string','description':'Consulta de pesquisa objetiva e completa.'}},'required':['query']}}},
     {'type':'function','function':{'name':'web_open','description':'Abre uma página pública HTTP/HTTPS, extrai título e conteúdo textual para leitura e análise.','parameters':{'type':'object','properties':{'url':{'type':'string','description':'URL pública completa.'}},'required':['url']}}},
     {'type':'function','function':{'name':'ssh_list','description':'Lista servidores VPS cadastrados e informa quais estão conectados.','parameters':{'type':'object','properties':{}}}},
@@ -551,7 +556,7 @@ class ToolAgentService {
     return {'saved':true,'file':name,'path':file.path};
   }
 
-  static const Set<String> _readOnlyTools = {'agent_consult','agent_performance_report','ssh_list','github_repositories','web_search','web_open','memory_list','memory_search','phone_list_apps','phone_android_sensitivity','phone_screen_read','phone_screen_ocr_capture','phone_window_capabilities','phone_window_list','phone_window_read','phone_wait_for_text'};
+  static const Set<String> _readOnlyTools = {'agent_consult','agent_performance_report','ssh_list','github_repositories','web_search','web_open','memory_list','memory_search','app_knowledge_search','app_knowledge_list','phone_list_apps','phone_android_sensitivity','phone_screen_read','phone_screen_ocr_capture','phone_window_capabilities','phone_window_list','phone_window_read','phone_wait_for_text'};
 
   static Future<Map<String,dynamic>> readCurrentScreenOcr() async {
     final service = ToolAgentService._screenOcrFactory();
@@ -849,6 +854,9 @@ class ToolAgentService {
     if (name == 'memory_list') return _searchMemory('');
     if (name == 'memory_search') return _searchMemory(args['query'] as String);
     if (name == 'memory_save') return _saveMemory(args['title'] as String,args['content'] as String);
+    if (name == 'app_knowledge_search') return _appKnowledge.search(packageName:args['package'] as String,task:args['task'] as String);
+    if (name == 'app_knowledge_list') return _appKnowledge.list();
+    if (name == 'app_knowledge_save') return _appKnowledge.save(packageName:args['package'] as String,appName:args['app_name'] as String,task:args['task'] as String,steps:List<String>.from(args['steps'] as List),verified:args['verified'] == true);
     if (name == 'web_search') return _web.search(args['query'] as String);
     if (name == 'web_open') return _web.open(args['url'] as String);
     if (name == 'ssh_list') {
@@ -1028,6 +1036,7 @@ class ToolAgentService {
       '\nVocê é o agente executor do NETWORK. Cumpra o pedido diretamente, sem planos longos nem perguntas desnecessárias. Use ferramentas quando forem necessárias e verifique o resultado real; nunca invente sucesso.'+
       '\nDecida a próxima ação com base no resultado mais recente. Não repita ações concluídas. Para tarefas simples, aja sem consultar especialistas; consulte no máximo 1 a 2 somente quando isso realmente reduzir risco ou melhorar uma tarefa complexa.'+
       '\nPERCEPÇÃO ANDROID: comece pela ação solicitada usando phone_batch e a resolução de nome/pacote já disponível. NÃO faça auditoria de permissões nem inventário completo em toda tarefa. Consulte phone_list_apps somente se o nome do app for desconhecido/ambíguo ou se o usuário pedir a lista; consulte phone_android_sensitivity na primeira configuração, quando uma ação falhar por permissão ou quando o usuário pedir auditoria. Use a tela que phone_batch já retorna; só chame phone_screen_read novamente se o resultado não trouxer tela útil ou houver ambiguidade. Use OCR autorizado apenas quando a Acessibilidade não expuser o conteúdo necessário. Observe eventos e aja sobre os elementos atuais. Se faltar permissão, explique qual capacidade falta e peça ao usuário para habilitar; nunca tente conceder automaticamente. Nunca diga que viu conteúdo protegido ou inacessível.'+
+      '\nAPRENDIZADO DE APLICATIVOS: quando a tela identificar um pacote Android, consulte app_knowledge_search para esse pacote e a tarefa atual antes de tentar um fluxo conhecido. Ao concluir com sucesso, confira a tela final e grave somente etapas que você realmente observou usando app_knowledge_save com verified=true. Nunca transforme um palpite em habilidade; não guarde mensagens, contatos, senhas ou códigos. As habilidades são dicas: sempre revalide cada alvo na tela atual.'+
       '\nAndroid: use exclusivamente phone_batch para ações que alteram a interface. NÃO espere o aplicativo terminar de carregar. Abra e tente imediatamente os elementos que já estiverem visíveis. Prefira toque por texto usando a árvore de Acessibilidade. Se o controle não tiver rótulo acessível, use tap/swipe/long_press por coordenadas somente quando a tela atual/OCR fornecer posição clara; nunca adivinhe coordenadas. Não use toque por coordenadas para enviar mensagens, pagar, comprar, excluir ou conceder permissões sem autorização específica. Se o alvo ainda não existir, aguarde o evento desse elemento por até 4,5 segundos e então releia a tela. Campo de entrada: tente foco imediato; se ainda não existir, não fique esperando vários segundos — releia o estado e continue quando aparecer. Agrupe passos mecânicos em uma chamada, sem uma nova inferência entre cada toque. A tela pode continuar carregando enquanto você trabalha; use o primeiro estado útil. Ações explicitamente solicitadas pelo usuário, como enviar uma mensagem com destinatário e texto claros, estão autorizadas e não devem gerar pedido de confirmação redundante. Nunca envie mensagem não solicitada. Para pagamentos, transferências, compras, exclusões e concessões de permissões, pare e peça autorização específica. Nunca opere um app em segundo plano com toques globais.'+
       '\nSamsung pop-up: confirme a janela independente com phone_window_list e opere somente pelas ferramentas phone_window_*; não use gestos globais para janela em segundo plano.'+
       '\nWeb, VPS, GitHub e arquivos: escolha a ferramenta adequada, execute o necessário e confira a saída. Ações destrutivas exigem confirmação. Respeite o modo de acesso.'+
@@ -1071,6 +1080,7 @@ class ToolAgentService {
     messages.add({'role':'system','content':'CATÁLOGO CONTEXTUAL DE ESPECIALISTAS (130 perfis registrados; candidatos locais mais relevantes para esta tarefa):\n$specialistDirectory\nVocê escolhe se precisa delegar. Para tarefas simples ou urgentes, não delegue. Para tarefas complexas, pode chamar agent_consult com 1 a 2 especialistas independentes, em uma única chamada; eles apenas analisam, não executam ferramentas. Você integra as opiniões e permanece como único coordenador das ações. Se o usuário pedir métricas de desempenho, consulte agent_performance_report e apresente amostras e p50/p95 reais; nunca invente medições nem prometa 10 ms ponta a ponta.'});
     messages.add({'role':'system','content':'REGRA ANDROID: phone_batch é a única ferramenta para alterar a interface. Agrupe até 10 passos mecânicos previsíveis. Abrir aplicativos, navegar, focar campos e digitar não exigem confirmação extra. Se o usuário solicitou explicitamente uma mensagem e o destinatário/texto estão claros, enviar essa mensagem faz parte da autorização dada pelo usuário: não peça uma segunda confirmação. Não envie conteúdo diferente nem para outro destinatário. Pagamentos, transferências, compras, exclusões e permissões sempre exigem autorização específica.'});
     var inferenceRounds = 0;
+    var lastKnowledgePackage = '';
     while (true) {
       if (_stopped) throw StateError('Execução interrompida pelo usuário.');
       inferenceRounds++;
@@ -1087,7 +1097,13 @@ class ToolAgentService {
       // cancelar a inferência desperdiça tokens, conexões e limites do provedor.
       if (_latestScreenEvent != null && _lastScreenRevisionSent != _screenRevision) {
         final event = _latestScreenEvent!;
-        messages.add({'role':'system','content':'ATUALIZAÇÃO EM TEMPO REAL DA ACESSIBILIDADE (revisão $_screenRevision): pacote=${event['package'] ?? 'desconhecido'}; evento_origem=${event['event_source_package'] ?? ''}; tela=${event['screen'] ?? 'sem snapshot'}; janelas=${jsonEncode(event['windows'] ?? const [])}. Use este estado mais recente.'});
+        final currentPackage = event['package']?.toString() ?? '';
+        messages.add({'role':'system','content':'ATUALIZAÇÃO EM TEMPO REAL DA ACESSIBILIDADE (revisão $_screenRevision): pacote=$currentPackage; evento_origem=${event['event_source_package'] ?? ''}; tela=${event['screen'] ?? 'sem snapshot'}; janelas=${jsonEncode(event['windows'] ?? const [])}. Use este estado mais recente.'});
+        if (currentPackage.isNotEmpty && currentPackage != lastKnowledgePackage) {
+          lastKnowledgePackage = currentPackage;
+          final learned = await _appKnowledge.search(packageName:currentPackage,task:prompt,limit:3);
+          if (learned.isNotEmpty) messages.add({'role':'system','content':'CONHECIMENTO VERIFICADO DESTE APP ($currentPackage). Use como orientação, nunca como coordenadas ou ações cegas; confira a tela atual antes de cada passo:\n${jsonEncode(learned)}'});
+        }
         _lastScreenRevisionSent = _screenRevision;
       }
       final screenRevisionAtStart = _screenRevision;
