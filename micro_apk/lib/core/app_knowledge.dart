@@ -94,12 +94,12 @@ class AppKnowledgeStore {
       return ((b.entry['successCount'] as num?)?.toInt() ?? 0)
           .compareTo((a.entry['successCount'] as num?)?.toInt() ?? 0);
     });
-    return matches.take(limit.clamp(1, 10))
+    return matches.take(limit.clamp(1, 10).toInt())
         .map((match) => Map<String, dynamic>.from(match.entry)..['matchScore'] = match.score)
         .toList();
   }
 
   Future<List<Map<String, dynamic>>> list({int limit = 80}) async {
-    return (await _read()).take(limit.clamp(1, maxEntries)).toList();
+    return (await _read()).take(limit.clamp(1, maxEntries).toInt()).toList();
   }
 }
