@@ -1,11 +1,8 @@
 name: Build NETWORK APK
 # Trigger build after speech callback fix
+# Manual-only legacy ARM64 build. The main network-apk.yml workflow
+# is the single automatic release pipeline to avoid duplicate Actions runs.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'micro_apk/**'
-      - '.github/workflows/build-micro-apk.yml'
   workflow_dispatch:
 concurrency:
   group: network-apk-main
