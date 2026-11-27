@@ -9,6 +9,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
@@ -38,6 +42,7 @@ class NetworkBubbleService : Service() {
     private var listening = false
     private var working = false
     private var speaking = false
+    private var neonRings: RotatingNeonRings? = null
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -103,6 +108,12 @@ class NetworkBubbleService : Service() {
             elevation = 14f
             contentDescription = "Toque para falar com NETWORK"
         }
+        val rings = RotatingNeonRings(dp(7).toFloat()).apply { alpha = 0 }
+        neonRings = rings
+        view.overlay.add(rings)
+        view.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            rings.setBounds(0, 0, v.width, v.height)
+        }
         val overlayType = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE
         val layout = WindowManager.LayoutParams(
             dp(58), dp(58), overlayType,
@@ -160,9 +171,10 @@ class NetworkBubbleService : Service() {
         view.alpha = if (listening) 1f else 0.28f
         (view.background as? GradientDrawable)?.setColor(Color.BLACK)
         (view.background as? GradientDrawable)?.setStroke(3, Color.WHITE)
+        neonRings?.setListening(listening)
         if (listening || working || speaking) {
-            pulse = ValueAnimator.ofFloat(1f, if (listening) 1.20f else 1.10f).apply {
-                duration = if (listening) 520 else if (speaking) 680 else 850
+            pulse = ValueAnimator.ofFloat(1f, if (listening) 1.035f else 1.045f).apply {
+                duration = if (listening) 1500 else if (speaking) 1200 else 1400
                 repeatMode = ValueAnimator.REVERSE
                 repeatCount = ValueAnimator.INFINITE
                 interpolator = LinearInterpolator()
@@ -195,6 +207,7 @@ class NetworkBubbleService : Service() {
 
     override fun onDestroy() {
         pulse?.cancel()
+        neonRings?.stop()
         try { unregisterReceiver(stateReceiver) } catch (_: Exception) {}
         try { bubble?.let { windowManager?.removeView(it) } } catch (_: Exception) {}
         tone?.release()
@@ -204,4 +217,56 @@ class NetworkBubbleService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+}
+
+/** Three subtle white neon arcs rotate around the bubble only during voice capture. */
+private class RotatingNeonRings(private val inset: Float) : Drawable() {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.25f
+        color = Color.WHITE
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val arcRect = RectF()
+    private var rotation = 0f
+    private var animator: ValueAnimator? = null
+    private var active = false
+    var alpha: Int = 0
+        set(value) { field = value.coerceIn(0, 255); invalidateSelf() }
+
+    fun setListening(enabled: Boolean) {
+        if (active == enabled) return
+        active = enabled
+        if (enabled) {
+            alpha = 82 // faint neon glow
+            animator = ValueAnimator.ofFloat(0f, 360f).apply {
+                duration = 5200L
+                repeatCount = ValueAnimator.INFINITE
+                interpolator = LinearInterpolator()
+                addUpdateListener { rotation = it.animatedValue as Float; invalidateSelf() }
+                start()
+            }
+        } else stop()
+    }
+
+    fun stop() { active = false; animator?.cancel(); animator = null; alpha = 0 }
+
+    override fun draw(canvas: Canvas) {
+        if (alpha == 0 || bounds.isEmpty) return
+        val save = canvas.save()
+        canvas.rotate(rotation, bounds.exactCenterX(), bounds.exactCenterY())
+        val cx = bounds.exactCenterX(); val cy = bounds.exactCenterY()
+        val baseRadius = (minOf(bounds.width(), bounds.height()) / 2f) - inset
+        // Three separated arc tracks, subtle and thin.
+        for (i in 0..2) {
+            val radius = baseRadius + (i - 1) * 2.8f
+            arcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
+            paint.alpha = (alpha * (1f - i * 0.12f)).toInt()
+            canvas.drawArc(arcRect, i * 120f + 18f, 76f, false, paint)
+        }
+        canvas.restoreToCount(save)
+    }
+    override fun setAlpha(value: Int) { alpha = value }
+    override fun setColorFilter(filter: android.graphics.ColorFilter?) { paint.colorFilter = filter; invalidateSelf() }
+    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
 }
