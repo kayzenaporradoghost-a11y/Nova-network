@@ -13,6 +13,7 @@ import 'agent_web_tools.dart';
 import 'agent_orchestrator.dart';
 import 'agent_performance.dart';
 import 'app_knowledge.dart';
+import 'agent_intent_router.dart';
 
 class VpsTarget {
   const VpsTarget({required this.name, required this.host, required this.username, this.port = 22});
@@ -1110,12 +1111,49 @@ class ToolAgentService {
         if (signal != null && !signal.isCompleted) signal.complete(_screenRevision);
       }
     }, onError: (_) {});
+    // Fast-path only a clear, standalone app-open request: no model call, no memory scan.
+    // It is disabled for read-only, resumed, contextual, or multi-action requests.
+    final directApp = resumeMessages == null && history.isEmpty && images.isEmpty &&
+        accessMode != 'readOnly' ? AgentIntentRouter.simpleOpenApp(prompt) : null;
+    if (directApp != null) {
+      final pending = await pendingTask();
+      if (pending == null) {
+        if (accessMode == 'confirm' && !await confirmDangerous('Abrir o aplicativo $directApp?')) {
+          await _screenSubscription?.cancel();
+          _screenSubscription = null;
+          try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
+          AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+          return 'Abertura cancelada pelo usuário.';
+        }
+        onProgress('Abrindo $directApp diretamente');
+        try {
+          final opened = await _executePhoneBatch([
+            {'tool':'open_app','args':{'app':directApp}},
+          ]);
+          final ok = opened['success'] == true;
+          final screen = opened['screen']?.toString() ?? '';
+          await _screenSubscription?.cancel();
+          _screenSubscription = null;
+          try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
+          AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+          return ok
+              ? 'Abri $directApp e confirmei a janela acessível.\n${screen.length > 1200 ? screen.substring(0,1200) : screen}'
+              : 'Não consegui confirmar a abertura de $directApp. Resultado real: ${jsonEncode(opened)}';
+        } catch (error) {
+          await _screenSubscription?.cancel();
+          _screenSubscription = null;
+          try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
+          AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+          return 'Falha ao abrir $directApp: $error';
+        }
+      }
+    }
     final endpoint = await ai.endpoint, model = await ai.model, token = await ai.apiKey;
     final system = (await ai.systemPrompt)+
       '\nVocê é o agente executor do NETWORK. Cumpra o pedido diretamente, sem planos longos nem perguntas desnecessárias. Use ferramentas quando forem necessárias e verifique o resultado real; nunca invente sucesso.'+
       '\nDecida a próxima ação usando o objetivo, o contexto e os resultados reais. Não repita ações concluídas. Para tarefas simples, execute diretamente; em tarefas complexas, consulte até 2 especialistas quando isso ajudar e reavalie decisões após resultados relevantes.'+
       '\nPERCEPÇÃO ANDROID: comece pela ação solicitada usando phone_batch e a resolução de nome/pacote já disponível. NÃO faça auditoria de permissões nem inventário completo em toda tarefa. Consulte phone_list_apps somente se o nome do app for desconhecido/ambíguo ou se o usuário pedir a lista; consulte phone_android_sensitivity na primeira configuração, quando uma ação falhar por permissão ou quando o usuário pedir auditoria. Use a tela que phone_batch já retorna; só chame phone_screen_read novamente se o resultado não trouxer tela útil ou houver ambiguidade. Use OCR autorizado apenas quando a Acessibilidade não expuser o conteúdo necessário. Observe eventos e aja sobre os elementos atuais. Se faltar permissão, explique qual capacidade falta e peça ao usuário para habilitar; nunca tente conceder automaticamente. Nunca diga que viu conteúdo protegido ou inacessível.'+
-      '\nAPRENDIZADO DE APLICATIVOS: quando a tela identificar um pacote Android, consulte app_knowledge_search para esse pacote e a tarefa atual antes de tentar um fluxo conhecido. Ao concluir com sucesso, confira a tela final e grave somente etapas que você realmente observou usando app_knowledge_save com verified=true. Nunca transforme um palpite em habilidade; não guarde mensagens, contatos, senhas ou códigos. As habilidades são dicas: sempre revalide cada alvo na tela atual.'+
+      '\nAPRENDIZADO DE APLICATIVOS: use app_knowledge_search somente quando o fluxo atual for desconhecido, uma tentativa falhar, houver ambiguidade real ou o usuário pedir explicitamente os fluxos aprendidos. NÃO atrase a primeira ação Android para buscar conhecimento. Ao concluir com sucesso, confira a tela final e grave somente etapas que você realmente observou usando app_knowledge_save com verified=true. Nunca transforme um palpite em habilidade; não guarde mensagens, contatos, senhas ou códigos. As habilidades são dicas: sempre revalide cada alvo na tela atual.'+
       '\nAndroid: use exclusivamente phone_batch para ações que alteram a interface. NÃO espere o aplicativo terminar de carregar. Abra e tente imediatamente os elementos que já estiverem visíveis. Prefira toque por texto usando a árvore de Acessibilidade. Se o controle não tiver rótulo acessível, use tap/swipe/long_press por coordenadas somente quando a tela atual/OCR fornecer posição clara; nunca adivinhe coordenadas. Não use toque por coordenadas para enviar mensagens, pagar, comprar, excluir ou conceder permissões sem autorização específica. Se o alvo ainda não existir, aguarde o evento desse elemento por até 4,5 segundos e então releia a tela. Campo de entrada: tente foco imediato; se ainda não existir, não fique esperando vários segundos — releia o estado e continue quando aparecer. Agrupe passos mecânicos em uma chamada, sem uma nova inferência entre cada toque. A tela pode continuar carregando enquanto você trabalha; use o primeiro estado útil. Ações explicitamente solicitadas pelo usuário, como enviar uma mensagem com destinatário e texto claros, estão autorizadas e não devem gerar pedido de confirmação redundante. Nunca envie mensagem não solicitada. Para pagamentos, transferências, compras, exclusões e concessões de permissões, pare e peça autorização específica. Nunca opere um app em segundo plano com toques globais.'+
       '\nSamsung pop-up: confirme a janela independente com phone_window_list e opere somente pelas ferramentas phone_window_*; não use gestos globais para janela em segundo plano.'+
       '\nDESEMPENHO: quando precisar de várias consultas independentes e somente de leitura, solicite-as no mesmo turno para o executor paralelizar. Não paralelize ações que alterem estado, navegação Android, comandos SSH/shell ou operações com dependência entre si. Evite repetir buscas, inventários e leituras que já estejam válidos no contexto.'+
@@ -1129,7 +1167,9 @@ class ToolAgentService {
             {'role':'user','content':images.isEmpty ? prompt : <Map<String,dynamic>>[{'type':'text','text':prompt}, ...images.map((image)=>{'type':'image_url','image_url':{'url':'data:'+image['mime']!+';base64,'+image['base64']!}})]}
           ];
     if (resumeMessages == null) {
-      final relevantMemory = await _searchMemory(prompt);
+      final isAndroidTask = RegExp(r'android|celular|telefone|smartphone|app|whatsapp|telegram|notifica|permiss[aã]o|acessibilidade|tela|aplicativo|abrir app|toque|digitar|clicar|janela flutuante|pop.?up|aparelho|mobile',caseSensitive:false).hasMatch(prompt);
+      final explicitlyMemoryRelated = RegExp(r'lembra|mem[oó]ria|anterior|da [uú]ltima vez|hist[oó]rico|fluxo aprendido|aprendeu',caseSensitive:false).hasMatch(prompt);
+      final relevantMemory = (isAndroidTask && !explicitlyMemoryRelated) ? const <Map<String,dynamic>>[] : await _searchMemory(prompt);
       if (relevantMemory.isNotEmpty) {
         messages.insert(1, {'role':'system','content':'MEMÓRIA PERSISTENTE RELEVANTE (contexto salvo anteriormente; use apenas quando pertinente):\n'+jsonEncode(relevantMemory)});
       }
@@ -1154,8 +1194,12 @@ class ToolAgentService {
           return value is String ? value.substring(0, value.length > 1200 ? 1200 : value.length) : '';
         }).join('\n');
     final availableTools = _availableTools('$prompt\n$recentContext');
-    final taskNeedsSpecialists = prompt.trim().length > 220 ||
-      RegExp(r'\b(pesquis|investig|compar|analis|arquitet|planej|projet|código|codigo|debug|auditor|estrateg|relat[oó]rio|v[aá]rios apps|m[uú]ltipl|complex)\\b',caseSensitive:false).hasMatch(prompt);
+    final isAndroidExecutionTask = RegExp(r'android|celular|telefone|smartphone|app|whatsapp|telegram|notifica|permiss[aã]o|acessibilidade|tela|aplicativo|abrir app|toque|digitar|clicar|janela flutuante|pop.?up|aparelho|mobile',caseSensitive:false).hasMatch(prompt);
+    final taskNeedsSpecialists = (prompt.trim().length > 220 ||
+      RegExp(r'\\b(pesquis|investig|compar|analis|arquitet|planej|projet|código|codigo|debug|auditor|estrateg|relat[oó]rio|v[aá]rios apps|m[uú]ltipl|complex)\\b',caseSensitive:false).hasMatch(prompt)) && !isAndroidExecutionTask;
+    if (isAndroidExecutionTask) {
+      messages.add({'role':'system','content':'EXECUÇÃO ANDROID ACTION-FIRST: não faça pré-auditoria nem consultas de memória/especialistas antes da primeira ação útil. Comece com phone_batch contendo a abertura do aplicativo/alvo e leitura do estado (o lote retorna a tela ao final). Use phone_list_apps apenas se o nome/pacote não puder ser resolvido, phone_android_sensitivity somente se permissão for explicitamente solicitada ou falhar por permissão, e app_knowledge_search somente se o fluxo estiver desconhecido ou uma tentativa falhar. Para passos mecânicos previsíveis, agrupe-os em um único phone_batch de até 10 ações. Após o lote, observe a tela real e só então replaneje se necessário. Não divida uma sequência previsível em chamadas separadas.'});
+    }
     if (taskNeedsSpecialists) {
       final specialistRoutingLatency = Stopwatch()..start();
       final specialistDirectory = AgentOrchestrator.directoryFor(prompt, limit:5);
@@ -1183,7 +1227,7 @@ class ToolAgentService {
         AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
         return 'A tarefa foi pausada após 128 ciclos de segurança. O histórico foi preservado para continuar.';
       }
-      onProgress('Executando · etapa $inferenceRounds');
+      onProgress('Reavaliando estado e escolhendo próxima ação');
       // O estado já foi salvo antes da chamada de ferramenta e após cada resultado.
       // Não regrave o histórico inteiro aqui: isso duplicava I/O antes de cada inferência.
       // Eventos de tela atualizam o contexto, mas não cancelam HTTP em andamento:
