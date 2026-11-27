@@ -12,6 +12,7 @@ void main() {
     expect(metric['count'], 100);
     expect(metric['p50Ms'], greaterThan(49));
     expect(metric['p95Ms'], greaterThanOrEqualTo(95));
+    expect(metric['p99Ms'], greaterThanOrEqualTo(99));
     AgentPerformanceMetrics.beginRun();
     final retained = AgentPerformanceMetrics.snapshot();
     expect(retained['sampleCount'], 100);
