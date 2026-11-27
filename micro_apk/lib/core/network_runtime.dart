@@ -1305,10 +1305,16 @@ class ToolAgentService {
       final packageAtInferenceStart = _latestScreenEvent?['package']?.toString();
       diag('INFERENCE_START', {'round': inferenceRounds, 'messages': messages.length, 'toolsAvailable': availableTools.length, 'screenRevision': screenRevisionAtStart});
       final inferenceClock = Stopwatch()..start();
-      final message = await _streamTurnWithRetry(
-        endpoint:endpoint,model:model,token:token,messages:messages,
-        tools:availableTools,onTextChunk:onTextChunk,onProgress:onProgress,
-      );
+      Map<String,dynamic> message;
+      try {
+        message = await _streamTurnWithRetry(
+          endpoint:endpoint,model:model,token:token,messages:messages,
+          tools:availableTools,onTextChunk:onTextChunk,onProgress:onProgress,
+        );
+      } catch (error) {
+        diag('INFERENCE_ERROR', {'round': inferenceRounds, 'durationMs': inferenceClock.elapsedMilliseconds, 'error': error.toString()});
+        rethrow;
+      }
       diag('INFERENCE_END', {'round': inferenceRounds, 'durationMs': inferenceClock.elapsedMilliseconds, 'assistantText': message['content']?.toString() ?? '', 'toolCalls': ((message['tool_calls'] as List?) ?? const []).map((raw) {
         try { final c = Map<String,dynamic>.from(raw as Map); final f = Map<String,dynamic>.from(c['function'] as Map); return {'id': c['id'], 'name': f['name'], 'arguments': f['arguments']}; } catch (_) { return {'invalid': raw.toString()}; }
       }).toList()});
