@@ -1093,6 +1093,7 @@ class ToolAgentService {
   }
 
   Future<String> run({
+    void Function(String, Map<String,dynamic>)? onDiagnostic,
     required String prompt, required String executionMode, required String accessMode,
     required List<Map<String,String>> history, required List<Map<String,String>> images,
     List<Map<String,dynamic>>? resumeMessages,
@@ -1100,8 +1101,30 @@ class ToolAgentService {
     required void Function(String) onProgress, required void Function(String) onTextChunk,
     required Future<String> Function(String) openAppFeature,
   }) async {
+    void diag(String event, [Map<String,dynamic> data = const {}]) {
+      try {
+        final safe = <String,dynamic>{};
+        for (final entry in data.entries) {
+          final key = entry.key.toLowerCase();
+          if (key.contains('token') || key.contains('api_key') || key.contains('password') || key.contains('secret') || key.contains('authorization')) {
+            safe[entry.key] = '[REDACTED]';
+          } else {
+            var value = entry.value;
+            if (value is String) {
+              value = value
+                .replaceAll(RegExp(r'(?i)(bearer\\s+)[a-z0-9._-]+'), r'\$1[REDACTED]')
+                .replaceAll(RegExp(r'(?i)(api[_-]?key|access[_-]?token|password|secret)(\\s*[:=]\\s*)[^\\s,;]+'), r'\$1\$2[REDACTED]');
+              if (value.length > 12000) value = value.substring(0,12000) + '...[TRUNCATED]';
+            }
+            safe[entry.key] = value;
+          }
+        }
+        onDiagnostic?.call(event, safe);
+      } catch (_) {}
+    }
     _stopped = false;
     _activeUserPrompt = prompt;
+    diag('ENGINE_START', {'prompt': prompt, 'executionMode': executionMode, 'accessMode': accessMode});
     final taskLatency = Stopwatch()..start();
     AgentPerformanceMetrics.beginRun();
     await _screenSubscription?.cancel();
@@ -1127,11 +1150,14 @@ class ToolAgentService {
     // this fresh read prevents short commands such as "send this here" from losing their referent.
     String initialScreenContext = '';
     try {
+      diag('SCREEN_READ_START');
       final currentScreen = await _channel.invokeMethod<dynamic>('phone_screen_read')
           .timeout(const Duration(milliseconds:1800));
       initialScreenContext = currentScreen?.toString() ?? '';
-    } catch (_) {
+      diag('SCREEN_READ_SUCCESS', {'snapshot': initialScreenContext});
+    } catch (error) {
       initialScreenContext = '';
+      diag('SCREEN_READ_ERROR', {'error': error.toString()});
     }
     // Fast-path only a clear, standalone app-open request: no model call, no memory scan.
     // It is disabled for read-only, resumed, contextual, or multi-action requests.
@@ -1147,7 +1173,8 @@ class ToolAgentService {
           AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
           return 'Abertura cancelada pelo usuário.';
         }
-        onProgress('Abrindo $directApp diretamente');
+        diag('DIRECT_APP_OPEN', {'app': directApp});
+      onProgress('Abrindo $directApp diretamente');
         try {
           final opened = await _executePhoneBatch([
             {'tool':'open_app','args':{'app':directApp}},
@@ -1241,7 +1268,7 @@ class ToolAgentService {
     // Android process kill during the very first inference must not erase it.
     await _saveCheckpoint(prompt, messages, phase: 'ready', inferenceRounds: 0);
     while (true) {
-      if (_stopped) throw StateError('Execução interrompida pelo usuário.');
+      if (_stopped) { diag('TASK_STOPPED', {'round': inferenceRounds}); throw StateError('Execução interrompida pelo usuário.'); }
       inferenceRounds++;
       // Sem teto artificial de etapas: a tarefa segue até concluir, falhar de verdade
       // ou receber interrupção explícita do usuário. Checkpoints preservam a retomada.
@@ -1263,10 +1290,15 @@ class ToolAgentService {
       }
       final screenRevisionAtStart = _screenRevision;
       final packageAtInferenceStart = _latestScreenEvent?['package']?.toString();
+      diag('INFERENCE_START', {'round': inferenceRounds, 'messages': messages.length, 'toolsAvailable': availableTools.length, 'screenRevision': screenRevisionAtStart});
+      final inferenceClock = Stopwatch()..start();
       final message = await _streamTurnWithRetry(
         endpoint:endpoint,model:model,token:token,messages:messages,
         tools:availableTools,onTextChunk:onTextChunk,onProgress:onProgress,
       );
+      diag('INFERENCE_END', {'round': inferenceRounds, 'durationMs': inferenceClock.elapsedMilliseconds, 'assistantText': message['content']?.toString() ?? '', 'toolCalls': ((message['tool_calls'] as List?) ?? const []).map((raw) {
+        try { final c = Map<String,dynamic>.from(raw as Map); final f = Map<String,dynamic>.from(c['function'] as Map); return {'id': c['id'], 'name': f['name'], 'arguments': f['arguments']}; } catch (_) { return {'invalid': raw.toString()}; }
+      }).toList()});
       // O checkpoint será gravado uma vez com a resposta do modelo; evita serializar
       // novamente o mesmo histórico antes de acrescentar a mensagem recebida.
       if (_stopped) throw StateError('Execução interrompida pelo usuário.');
@@ -1313,11 +1345,13 @@ class ToolAgentService {
       await _saveCheckpoint(prompt, messages);
       final calls = (message['tool_calls'] as List?) ?? const [];
       if (calls.isEmpty) {
+        diag('TASK_MODEL_FINISHED', {'round': inferenceRounds, 'finalText': message['content']?.toString() ?? ''});
         await _screenSubscription?.cancel();
         _screenSubscription = null;
         await _clearCheckpoint();
         try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
         AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+        diag('TASK_COMPLETE', {'round': inferenceRounds, 'durationMs': taskLatency.elapsedMilliseconds});
         return message['content']?.toString().trim() ?? '';
       }
 
@@ -1351,6 +1385,7 @@ class ToolAgentService {
             batch.add(calls[callIndex]);
             callIndex++;
           }
+          diag('PARALLEL_TOOLS_START', {'count': batch.length, 'tools': batch.map((raw) { final c = Map<String,dynamic>.from(raw as Map); return (Map<String,dynamic>.from(c['function'] as Map))['name']; }).toList()});
           onProgress('Executando ${batch.length} consultas independentes em paralelo');
           final results = await Future.wait(batch.map((raw) => _runToolCall(
             raw,
@@ -1361,6 +1396,7 @@ class ToolAgentService {
           )));
           if (_stopped) throw StateError('Execução interrompida pelo usuário.');
           messages.addAll(results);
+          diag('PARALLEL_TOOLS_END', {'results': results});
           final failedReads = results.where((item) => item['content']?.toString().contains('"error"') == true).length;
           if (failedReads > 0) {
             messages.add({'role':'system','content':'RECUPERAÇÃO AUTOMÁTICA: $failedReads ferramenta(s) retornaram erro. Analise a mensagem exata, escolha uma correção concreta (argumentos, pré-condição, ferramenta alternativa ou nova leitura) e tente novamente quando for seguro. Não repita ações com efeito colateral cujo resultado seja incerto; inspecione o estado primeiro. Não declare a tarefa concluída enquanto o objetivo não estiver verificado.'});
@@ -1391,13 +1427,16 @@ class ToolAgentService {
         }
         if (identicalRecentCalls >= 2) {
           final callId = call['id']?.toString() ?? '';
+          diag('LOOP_GUARD', {'tool': toolName, 'arguments': rawArgs, 'identicalCalls': identicalRecentCalls});
           messages.add({'role':'tool','tool_call_id':callId,'content':jsonEncode({'error':'LOOP_GUARD: esta chamada idêntica já foi executada duas vezes. Não execute novamente. Leia o estado atual, tente uma estratégia diferente ou encerre informando o bloqueio.'})});
           messages.add({'role':'system','content':'LOOP GUARD: a chamada $toolName com os mesmos argumentos foi bloqueada após duas execuções anteriores. Você DEVE mudar a estratégia e observar o estado real; não repita a ferramenta, nem narre que vai repetir. Se for Android, leia a tela atual e tente uma alternativa distinta apenas uma vez; se não houver alternativa viável, pare e informe o bloqueio específico.'});
           onProgress('Repetição idêntica bloqueada; exigindo estratégia alternativa');
           await _saveCheckpoint(prompt, messages);
           continue;
         }
+        diag('TOOL_START', {'tool': toolName, 'arguments': rawArgs, 'round': inferenceRounds, 'callId': call['id']});
         onProgress('IA decidiu executar: '+toolName);
+        final toolClock = Stopwatch()..start();
         final toolResult = await _runToolCall(
           raw,
           accessMode:accessMode,
@@ -1407,6 +1446,7 @@ class ToolAgentService {
         );
         if (_stopped) throw StateError('Execução interrompida pelo usuário');
         messages.add(toolResult);
+        diag('TOOL_END', {'tool': toolName, 'durationMs': toolClock.elapsedMilliseconds, 'result': toolResult['content']?.toString() ?? ''});
         if (toolResult['content']?.toString().contains('"error"') == true) {
           messages.add({'role':'system','content':'RECUPERAÇÃO AUTOMÁTICA: a ferramenta $toolName falhou. Leia o erro exato, identifique e corrija a causa (argumentos, pré-condição, permissão ou ferramenta alternativa) e continue a tarefa. Não repita cegamente uma ação com efeito colateral se o resultado for incerto; primeiro inspecione o estado. Não declare sucesso sem verificar o resultado real.'});
           onProgress('Falha em $toolName · diagnosticando e tentando corrigir');
