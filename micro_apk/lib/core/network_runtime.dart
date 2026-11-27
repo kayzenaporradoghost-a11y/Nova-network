@@ -1101,25 +1101,32 @@ class ToolAgentService {
     required void Function(String) onProgress, required void Function(String) onTextChunk,
     required Future<String> Function(String) openAppFeature,
   }) async {
+    Object sanitizeDiagnostic(Object? input) {
+      if (input is Map) {
+        final output = <String,dynamic>{};
+        for (final entry in input.entries) {
+          final key = entry.key.toString();
+          final lower = key.toLowerCase();
+          output[key] = (lower.contains('token') || lower.contains('api_key') ||
+              lower.contains('password') || lower.contains('secret') ||
+              lower.contains('authorization') || lower.contains('cookie'))
+              ? '[REDACTED]' : sanitizeDiagnostic(entry.value);
+        }
+        return output;
+      }
+      if (input is List) return input.map(sanitizeDiagnostic).toList();
+      if (input is String) {
+        var value = input
+            .replaceAll(RegExp(r'(?i)(bearer\\s+)[a-z0-9._-]+'), r'$1[REDACTED]')
+            .replaceAll(RegExp(r'(?i)(api[_-]?key|access[_-]?token|password|secret)(\\s*[:=]\\s*)[^\\s,;]+'), r'$1$2[REDACTED]');
+        if (value.length > 16000) value = value.substring(0,16000) + '...[TRUNCATED]';
+        return value;
+      }
+      return input ?? 'null';
+    }
     void diag(String event, [Map<String,dynamic> data = const {}]) {
       try {
-        final safe = <String,dynamic>{};
-        for (final entry in data.entries) {
-          final key = entry.key.toLowerCase();
-          if (key.contains('token') || key.contains('api_key') || key.contains('password') || key.contains('secret') || key.contains('authorization')) {
-            safe[entry.key] = '[REDACTED]';
-          } else {
-            var value = entry.value;
-            if (value is String) {
-              value = value
-                .replaceAll(RegExp(r'(?i)(bearer\\s+)[a-z0-9._-]+'), r'\$1[REDACTED]')
-                .replaceAll(RegExp(r'(?i)(api[_-]?key|access[_-]?token|password|secret)(\\s*[:=]\\s*)[^\\s,;]+'), r'\$1\$2[REDACTED]');
-              if (value.length > 12000) value = value.substring(0,12000) + '...[TRUNCATED]';
-            }
-            safe[entry.key] = value;
-          }
-        }
-        onDiagnostic?.call(event, safe);
+        onDiagnostic?.call(event, Map<String,dynamic>.from(sanitizeDiagnostic(data) as Map));
       } catch (_) {}
     }
     _stopped = false;
@@ -1137,6 +1144,11 @@ class ToolAgentService {
       if (event is Map) {
         final ingestLatency = Stopwatch()..start();
         _latestScreenEvent = Map<String,dynamic>.from(event);
+        diag('ACCESSIBILITY_EVENT', {
+          'package': event['package'], 'eventType': event['eventType'],
+          'screen': event['screen'], 'windows': event['windows'],
+          'eventAgeMs': event['eventAgeMs'], 'snapshotBuildMs': event['snapshotBuildMs'],
+        });
         AgentPerformanceMetrics.recordMilliseconds('accessibility.event_age', (event['eventAgeMs'] as num?) ?? 0);
         AgentPerformanceMetrics.recordMilliseconds('accessibility.snapshot_build', (event['snapshotBuildMs'] as num?) ?? 0);
         _screenRevision++;
@@ -1179,6 +1191,7 @@ class ToolAgentService {
           final opened = await _executePhoneBatch([
             {'tool':'open_app','args':{'app':directApp}},
           ]);
+          diag('DIRECT_APP_OPEN_RESULT', {'app': directApp, 'result': opened});
           final ok = opened['success'] == true;
           final screen = opened['screen']?.toString() ?? '';
           await _screenSubscription?.cancel();
