@@ -337,7 +337,7 @@ class NetworkAccessibilityService : AccessibilityService() {
         return when (action) {
             "phone_screen_read" -> readScreen()
             "phone_ui_index" -> UiIndex(rootInActiveWindow).summary()
-            "phone_execute_batch" -> executeBatch(args)
+            "phone_execute_batch" -> { if (!featureFlag("FF_BATCH")) throw IllegalStateException("FF_BATCH está desligada."); executeBatch(args) }\n            "phone_set_perf_flags" -> setPerformanceFlags(args)
             "phone_list_apps" -> listApps()
             "phone_tap" -> gesture(number(args, "x"), number(args, "y"), number(args, "x"), number(args, "y"), 90)
             "phone_tap_text" -> tapText(args["text"]?.toString() ?: "")
@@ -424,9 +424,58 @@ class NetworkAccessibilityService : AccessibilityService() {
         mainHandler.post(task)
     }
 
+    private fun featureFlag(name: String): Boolean =
+        getSharedPreferences("network_perf_flags", MODE_PRIVATE).getBoolean(name, false)
+
     private fun readScreen(): String {
+        if (!featureFlag("FF_INDEX")) return readScreenLegacy()
         val root = rootInActiveWindow ?: return "A janela atual não disponibilizou elementos para acessibilidade.\\nNODE_COUNT_RAW: 0\\nNODE_COUNT_FILTERED: 0"
         return UiIndex(root).summary()
+    }
+
+    private fun readScreenLegacy(): String {
+        val root = rootInActiveWindow ?: return "A janela atual não disponibilizou elementos para acessibilidade."
+        val output = StringBuilder()
+        output.append("APP: ").append(root.packageName ?: "desconhecido").append('\n')
+        var count = 0
+        fun walk(node: AccessibilityNodeInfo, depth: Int) {
+            if (count >= 120 || depth > 18) return
+            val text = node.text?.toString()?.trim().orEmpty()
+            val description = node.contentDescription?.toString()?.trim().orEmpty()
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if ((text.isNotEmpty() || description.isNotEmpty() || node.isClickable || node.isEditable || node.isScrollable) && !bounds.isEmpty) {
+                output.append("ELEMENTO ").append(count + 1)
+                    .append(" texto=").append(text.take(240))
+                    .append(" descrição=").append(description.take(160))
+                    .append(" classe=").append(node.className ?: "")
+                    .append(" bounds=").append(bounds.left).append(',').append(bounds.top)
+                    .append(',').append(bounds.right).append(',').append(bounds.bottom)
+                     .append(" clicável=").append(node.isClickable)
+                    .append(" rolável=").append(node.isScrollable)
+                    .append(" editável=").append(node.isEditable)
+                    .append('\n')
+                count++
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                walk(child, depth + 1)
+            }
+        }
+        walk(root, 0)
+        if (count == 0) output.append("Nenhum texto/elemento acessível exposto pelo app atual.")
+        return output.toString().take(16000)
+    }
+
+
+    private fun setPerformanceFlags(args: Map<String, Any?>): Map<String, Any?> {
+        val prefs = getSharedPreferences("network_perf_flags", MODE_PRIVATE)
+        val editor = prefs.edit()
+        listOf("FF_INDEX", "FF_BATCH").forEach { key ->
+            (args[key] as? Boolean)?.let { editor.putBoolean(key, it) }
+        }
+        editor.apply()
+        return mapOf("FF_INDEX" to prefs.getBoolean("FF_INDEX", false), "FF_BATCH" to prefs.getBoolean("FF_BATCH", false))
     }
 
     // Lotes pequenos executados na thread do AccessibilityService.
