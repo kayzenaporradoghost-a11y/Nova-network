@@ -231,14 +231,13 @@ private class RotatingNeonRings(private val inset: Float) : Drawable() {
     private var rotation = 0f
     private var animator: ValueAnimator? = null
     private var active = false
-    var alpha: Int = 0
-        set(value) { field = value.coerceIn(0, 255); invalidateSelf() }
+    private var opacity: Int = 0
 
     fun setListening(enabled: Boolean) {
         if (active == enabled) return
         active = enabled
         if (enabled) {
-            alpha = 82 // faint neon glow
+            setAlpha(82) // faint neon glow
             animator = ValueAnimator.ofFloat(0f, 360f).apply {
                 duration = 5200L
                 repeatCount = ValueAnimator.INFINITE
@@ -249,10 +248,10 @@ private class RotatingNeonRings(private val inset: Float) : Drawable() {
         } else stop()
     }
 
-    fun stop() { active = false; animator?.cancel(); animator = null; alpha = 0 }
+    fun stop() { active = false; animator?.cancel(); animator = null; setAlpha(0) }
 
     override fun draw(canvas: Canvas) {
-        if (alpha == 0 || bounds.isEmpty) return
+        if (opacity == 0 || bounds.isEmpty) return
         val save = canvas.save()
         canvas.rotate(rotation, bounds.exactCenterX(), bounds.exactCenterY())
         val cx = bounds.exactCenterX(); val cy = bounds.exactCenterY()
@@ -261,12 +260,12 @@ private class RotatingNeonRings(private val inset: Float) : Drawable() {
         for (i in 0..2) {
             val radius = baseRadius + (i - 1) * 2.8f
             arcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
-            paint.alpha = (alpha * (1f - i * 0.12f)).toInt()
+            paint.alpha = (opacity * (1f - i * 0.12f)).toInt()
             canvas.drawArc(arcRect, i * 120f + 18f, 76f, false, paint)
         }
         canvas.restoreToCount(save)
     }
-    override fun setAlpha(value: Int) { alpha = value }
+    override fun setAlpha(value: Int) { opacity = value.coerceIn(0, 255); invalidateSelf() }
     override fun setColorFilter(filter: android.graphics.ColorFilter?) { paint.colorFilter = filter; invalidateSelf() }
     override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
 }
