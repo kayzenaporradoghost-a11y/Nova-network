@@ -1156,7 +1156,7 @@ class ToolAgentService {
         }).join('\n');
     final availableTools = _availableTools('$prompt\n$recentContext');
     final taskNeedsSpecialists = prompt.trim().length > 220 ||
-      RegExp(r'\\b(pesquis|investig|compar|analis|arquitet|planej|projet|código|codigo|debug|auditor|estrateg|relat[oó]rio|v[aá]rios apps|m[uú]ltipl|complex)\\b',caseSensitive:false).hasMatch(prompt);
+      RegExp(r'\b(pesquis|investig|compar|analis|arquitet|planej|projet|código|codigo|debug|auditor|estrateg|relat[oó]rio|v[aá]rios apps|m[uú]ltipl|complex)\\b',caseSensitive:false).hasMatch(prompt);
     if (taskNeedsSpecialists) {
       final specialistRoutingLatency = Stopwatch()..start();
       final specialistDirectory = AgentOrchestrator.directoryFor(prompt, limit:5);
