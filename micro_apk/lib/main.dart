@@ -82,7 +82,8 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     final line = jsonEncode({'time': stamp, 'event': event, ...data});
     _diagnosticLines.add(line);
     if (_diagnosticLines.length > 5000) _diagnosticLines.removeRange(0, _diagnosticLines.length - 5000);
-    if (mounted) setState(() {});
+    if (mounted && (event.startsWith('TASK_') || event.startsWith('TOOL_') ||
+        event.startsWith('INFERENCE_') || event == 'PROGRESS')) setState(() {});
   }
 
   Future<void> _copyDiagnostics() async {
