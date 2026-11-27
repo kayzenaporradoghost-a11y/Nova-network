@@ -531,6 +531,8 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       await _stopAgent();
       return;
     }
+    // Captura o texto antes de qualquer mudança de foco/teclado e usa-o
+    // explicitamente no envio para evitar perda de conteúdo por corrida.
     final prompt = _composer.text.trim();
     if (prompt.isEmpty && _attachments.isEmpty) {
       if (mounted) {
@@ -540,8 +542,9 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       }
       return;
     }
+    _recordDiagnostic('SEND_BUTTON_TAP', {'promptLength': prompt.length, 'attachments': _attachments.length});
     try {
-      await _send();
+      await _send(promptOverride: prompt);
     } catch (error, stack) {
       _recordDiagnostic('SEND_PREPARATION_ERROR', {
         'error': error.toString(),
