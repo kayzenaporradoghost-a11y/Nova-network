@@ -63,7 +63,12 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
   sherpa.OfflineTts? _voiceTts;
   Future<void>? _voiceTtsLoading;
   bool _speechReady = false, _listening = false;
-  bool _autoSendVoice = false, _voiceAutoSendScheduled = false;
+  bool _autoSendVoice = false;
+  Future<bool>? _speechInitialization;
+  Timer? _voiceAutoSendTimer;
+  String _voiceDraft = '';
+  String? _queuedVoicePrompt;
+  int _voiceSessionId = 0;
   StreamSubscription<dynamic>? _voiceCommandSubscription;
   final ScrollController _chatScroll = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
@@ -127,6 +132,8 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
 
     await _verifyAccessibilitySetup(showPrompt: true);
     await _ensureFloatingBubble();
+    // Inicializa o reconhecedor uma única vez, depois da permissão do microfone.
+    await _ensureSpeechInitialized();
   }
 
   Future<void> _ensureFloatingBubble() async {
@@ -259,47 +266,78 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     }
   }
 
+  Future<bool> _ensureSpeechInitialized() async {
+    if (_speechReady) return true;
+    _speechInitialization ??= _speech.initialize(
+      onStatus: (status) {
+        final isListening = status == 'listening';
+        if (mounted) setState(() => _listening = isListening);
+        if (isListening) {
+          _setFloatingBubbleState('listening');
+        } else if (_autoSendVoice && _voiceDraft.trim().isNotEmpty) {
+          // Fallback: o resultado final pode chegar logo depois do status.
+          _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 400));
+        }
+      },
+      onError: (_) {
+        if (mounted) setState(() => _listening = false);
+        if (_autoSendVoice) {
+          _autoSendVoice = false;
+          _setFloatingBubbleState('error');
+        }
+      },
+    );
+    try {
+      _speechReady = await _speechInitialization!;
+      if (!_speechReady) _speechInitialization = null;
+      return _speechReady;
+    } catch (_) {
+      _speechInitialization = null;
+      rethrow;
+    }
+  }
+
   Future<void> _toggleVoiceInput({bool autoSend = false}) async {
     if (_listening) {
-      if (autoSend) _autoSendVoice = true;
+      final shouldAutoSend = _autoSendVoice && autoSend;
       await _speech.stop();
       if (mounted) setState(() => _listening = false);
-      if (_autoSendVoice) _scheduleVoiceAutoSend();
+      if (shouldAutoSend) {
+        _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 180));
+      }
       return;
     }
+
+    _voiceAutoSendTimer?.cancel();
+    _voiceSessionId++;
+    _voiceDraft = '';
+    _composer.clear();
     _autoSendVoice = autoSend;
-    _voiceAutoSendScheduled = false;
     try {
-      _speechReady = await _speech.initialize(
-        onStatus: (status) {
-          final isListening = status == 'listening';
-          if (mounted) setState(() => _listening = isListening);
-          if (isListening) {
-            _setFloatingBubbleState('listening');
-          } else if (_autoSendVoice) {
-            _scheduleVoiceAutoSend();
-          }
-        },
-        onError: (_) {
-          if (mounted) setState(() => _listening = false);
-          if (_autoSendVoice) _scheduleVoiceAutoSend();
-          else _setFloatingBubbleState('error');
-        },
-      );
-      if (!_speechReady) {
+      // O reconhecedor fica aquecido entre usos; não inicializa de novo a cada toque.
+      if (!await _ensureSpeechInitialized()) {
         _autoSendVoice = false;
         await _setFloatingBubbleState('error');
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reconhecimento de voz indisponível neste aparelho.')));
         return;
       }
+      final sessionId = _voiceSessionId;
       await _speech.listen(
         localeId: 'pt_BR',
         listenFor: const Duration(minutes: 2),
-        pauseFor: const Duration(seconds: 4),
+        pauseFor: const Duration(seconds: 1),
         onResult: (result) {
-          if (!mounted) return;
-          setState(() => _composer.text = result.recognizedWords);
-          if (result.finalResult && _autoSendVoice) _scheduleVoiceAutoSend();
+          if (!mounted || sessionId != _voiceSessionId) return;
+          _voiceDraft = result.recognizedWords.trim();
+          setState(() {
+            _composer.value = TextEditingValue(
+              text: _voiceDraft,
+              selection: TextSelection.collapsed(offset: _voiceDraft.length),
+            );
+          });
+          if (result.finalResult && _autoSendVoice) {
+            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 180));
+          }
         },
       );
       if (mounted) setState(() => _listening = true);
@@ -311,29 +349,20 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     }
   }
 
-  void _scheduleVoiceAutoSend() {
-    if (!_autoSendVoice || _voiceAutoSendScheduled) return;
-    _voiceAutoSendScheduled = true;
-    Future<void>.delayed(const Duration(milliseconds: 650), () async {
-      _voiceAutoSendScheduled = false;
-      if (!_autoSendVoice) return;
+  void _scheduleVoiceAutoSend({Duration delay = const Duration(milliseconds: 300)}) {
+    if (!_autoSendVoice || _voiceDraft.trim().isEmpty) return;
+    _voiceAutoSendTimer?.cancel();
+    final sessionId = _voiceSessionId;
+    _voiceAutoSendTimer = Timer(delay, () async {
+      if (!mounted || !_autoSendVoice || sessionId != _voiceSessionId) return;
+      final transcript = _voiceDraft.trim();
+      if (transcript.isEmpty) return;
       _autoSendVoice = false;
-      if (!mounted || _composer.text.trim().isEmpty) {
-        await _setFloatingBubbleState('idle');
-        return;
-      }
+      _voiceDraft = '';
+      _composer.clear();
       await _setFloatingBubbleState('working');
-      const acknowledgements = <String>[
-        'Entendi. Estou enviando sua mensagem agora.',
-        'Certo, já passei seu pedido para a IA.',
-        'Beleza, vou processar o que você falou.',
-        'Recebi sua voz. Já estou cuidando disso.',
-        'Pronto, sua mensagem está seguindo para o NETWORK.',
-        'Pode deixar, estou encaminhando seu pedido.',
-      ];
-      final phraseIndex = DateTime.now().microsecondsSinceEpoch % acknowledgements.length;
-      await _speakNetworkText(acknowledgements[phraseIndex]);
-      await _send(speakResponse: true);
+      // Usa uma cópia imutável da fala atual; nunca relê o texto antigo do campo.
+      await _send(speakResponse: true, promptOverride: transcript);
       await _setFloatingBubbleState('idle');
     });
   }
@@ -395,6 +424,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _voiceCommandSubscription?.cancel();
+    _voiceAutoSendTimer?.cancel();
     _speech.stop();
     _voiceTts?.free();
     _voicePlayer.dispose();
@@ -414,9 +444,13 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     await _persist();
   }
 
-  Future<void> _send({bool speakResponse = false}) async {
-    final prompt = _composer.text.trim();
-    if (_running || (prompt.isEmpty && _attachments.isEmpty)) return;
+  Future<void> _send({bool speakResponse = false, String? promptOverride}) async {
+    final prompt = (promptOverride ?? _composer.text).trim();
+    if (prompt.isEmpty && _attachments.isEmpty) return;
+    if (_running) {
+      if (promptOverride != null) _queuedVoicePrompt = prompt;
+      return;
+    }
     final files = List<PlatformFile>.from(_attachments);
     // Keep the prompt context bounded: resending the entire chat on every tool turn
     // makes inference progressively slower as the conversation grows.
@@ -499,6 +533,11 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       if (mounted) setState(() { _running = false; _activity = 'SISTEMA PRONTO'; });
       await _persist();
       _scrollToEnd();
+      final queuedPrompt = _queuedVoicePrompt;
+      _queuedVoicePrompt = null;
+      if (queuedPrompt != null && queuedPrompt.trim().isNotEmpty && mounted) {
+        Future<void>.microtask(() => _send(speakResponse: true, promptOverride: queuedPrompt));
+      }
     }
   }
 
