@@ -1112,7 +1112,7 @@ class ToolAgentService {
     _stopped = false;
     _activeUserPrompt = prompt;
     final taskLatency = Stopwatch()..start();
-    AgentPerformanceMetrics.beginRun();
+    AgentPerformanceMetrics.beginRun(flow: 'agent_task');
     await _screenSubscription?.cancel();
     _screenRevision = 0;
     _lastScreenRevisionSent = 0;
@@ -1135,12 +1135,15 @@ class ToolAgentService {
     // The accessibility service keeps receiving Android screen events between requests;
     // this fresh read prevents short commands such as "send this here" from losing their referent.
     String initialScreenContext = '';
+    final initialScreenLatency = Stopwatch()..start();
     try {
       final currentScreen = await _channel.invokeMethod<dynamic>('phone_screen_read')
           .timeout(const Duration(milliseconds:1800));
       initialScreenContext = currentScreen?.toString() ?? '';
     } catch (_) {
       initialScreenContext = '';
+    } finally {
+      AgentPerformanceMetrics.record('android.initial_screen_read', initialScreenLatency.elapsed);
     }
     // Fast-path only a clear, standalone app-open request: no model call, no memory scan.
     // It is disabled for read-only, resumed, contextual, or multi-action requests.
@@ -1154,19 +1157,23 @@ class ToolAgentService {
           _screenSubscription = null;
           try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
           AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+          AgentPerformanceMetrics.endRun(status: 'cancelled', flow: 'open_app');
           return 'Abertura cancelada pelo usuário.';
         }
         onProgress('Abrindo $directApp diretamente');
         try {
+          final openLatency = Stopwatch()..start();
           final opened = await _executePhoneBatch([
             {'tool':'open_app','args':{'app':directApp}},
           ]);
+          AgentPerformanceMetrics.record('android.open_app', openLatency.elapsed);
           final ok = opened['success'] == true;
           final screen = opened['screen']?.toString() ?? '';
           await _screenSubscription?.cancel();
           _screenSubscription = null;
           try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
           AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+          AgentPerformanceMetrics.endRun(status: ok ? 'completed' : 'unverified', flow: 'open_app');
           return ok
               ? 'Abri $directApp e confirmei a janela acessível.\n${screen.length > 1200 ? screen.substring(0,1200) : screen}'
               : 'Não consegui confirmar a abertura de $directApp. Resultado real: ${jsonEncode(opened)}';
@@ -1175,6 +1182,8 @@ class ToolAgentService {
           _screenSubscription = null;
           try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
           AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+          AgentPerformanceMetrics.endRun(status: 'failed', flow: 'open_app');
+          AgentPerformanceMetrics.event('android.open_app_error', {'error': error.toString()});
           return 'Falha ao abrir $directApp: $error';
         }
       }
@@ -1328,6 +1337,7 @@ class ToolAgentService {
         await _clearCheckpoint();
         try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
         AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
+        AgentPerformanceMetrics.endRun(status: 'completed', flow: 'agent_task');
         return message['content']?.toString().trim() ?? '';
       }
 

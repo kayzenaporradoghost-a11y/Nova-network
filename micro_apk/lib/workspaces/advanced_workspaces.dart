@@ -57,33 +57,144 @@ class _AgentsWorkspaceState extends State<AgentsWorkspace> {
   }
 }
 
-class AgentPerformanceWorkspace extends StatefulWidget { const AgentPerformanceWorkspace({super.key}); @override State<AgentPerformanceWorkspace> createState()=>_AgentPerformanceWorkspaceState(); }
+class AgentPerformanceWorkspace extends StatefulWidget {
+  const AgentPerformanceWorkspace({super.key});
+  @override State<AgentPerformanceWorkspace> createState() => _AgentPerformanceWorkspaceState();
+}
+
 class _AgentPerformanceWorkspaceState extends State<AgentPerformanceWorkspace> {
-  Map<String,dynamic> _snapshot={};
-  @override void initState(){super.initState();_refresh();}
-  void _refresh()=>setState(()=>_snapshot=AgentPerformanceMetrics.snapshot());
-  String _ms(dynamic n)=>(n is num?n:0).toStringAsFixed(2);
-  Widget _card(String label,String value)=>Expanded(child:Container(padding:const EdgeInsets.all(10),decoration:BoxDecoration(color:_panel,border:Border.all(color:_line),borderRadius:BorderRadius.circular(8)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(label,style:const TextStyle(fontSize:8,color:_muted)),const SizedBox(height:5),Text(value,style:const TextStyle(fontSize:18,fontWeight:FontWeight.w800))])));
-  @override Widget build(BuildContext context){
-    final metrics=Map<String,dynamic>.from(_snapshot['metrics'] as Map? ?? {});
-    return _WorkspacePage(title:'Desempenho real',description:'Métricas coletadas neste processo e aparelho. Os números aparecem depois que as operações correspondentes forem executadas.',child:Column(children:[
-      Padding(padding:const EdgeInsets.all(14),child:Row(children:[
-        _card('EXECUÇÕES',(_snapshot['runCount']??0).toString()),const SizedBox(width:7),
-        _card('AMOSTRAS',(_snapshot['sampleCount']??0).toString()),const SizedBox(width:7),
-        _card('MÉTRICAS',metrics.length.toString()),
-      ])),
-      Padding(padding:const EdgeInsets.symmetric(horizontal:14),child:Row(children:[const Expanded(child:Text('LATÊNCIA POR OPERAÇÃO',style:TextStyle(fontSize:9,color:_muted,letterSpacing:1.2))),IconButton(onPressed:_refresh,icon:const Icon(Icons.refresh,size:18))])),
-      Expanded(child:metrics.isEmpty?const Center(child:Padding(padding:EdgeInsets.all(24),child:Text('Ainda não há amostras. Execute tarefas no NETWORK e atualize este painel.',textAlign:TextAlign.center,style:TextStyle(fontSize:12,color:_muted)))):ListView(children:metrics.entries.map((e){
-        final v=Map<String,dynamic>.from(e.value as Map);
-        return ListTile(title:Text(e.key,style:const TextStyle(fontSize:11,fontWeight:FontWeight.w600)),
-          subtitle:Text((v['count']??0).toString()+' amostras · mínimo '+_ms(v['minMs'])+' ms · máximo '+_ms(v['maxMs'])+' ms',style:const TextStyle(fontSize:9,color:_muted)),
-          trailing:Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.end,children:[
-            Text('p50 '+_ms(v['p50Ms'])+' ms',style:const TextStyle(fontSize:10,color:_accent,fontWeight:FontWeight.w700)),
-            Text('p95 '+_ms(v['p95Ms'])+' ms',style:const TextStyle(fontSize:9,color:_muted)),
-          ]));
-      }).toList())),
-      Padding(padding:const EdgeInsets.all(12),child:Text(_snapshot['note']?.toString()??'As métricas são locais e reiniciam quando o processo é encerrado.',style:const TextStyle(fontSize:9,color:_muted))),
-    ]));
+  Map<String, dynamic> _snapshot = {};
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (mounted) setState(() => _loading = true);
+    await AgentPerformanceMetrics.initialize();
+    await AgentPerformanceMetrics.flush();
+    if (!mounted) return;
+    setState(() {
+      _snapshot = AgentPerformanceMetrics.snapshot();
+      _loading = false;
+    });
+  }
+
+  String _ms(dynamic n) => (n is num ? n : 0).toStringAsFixed(2);
+
+  Widget _card(String label, String value) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: _panel, border: Border.all(color: _line), borderRadius: BorderRadius.circular(8)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(fontSize: 8, color: _muted)),
+        const SizedBox(height: 5),
+        Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+      ]),
+    ),
+  );
+
+  Future<void> _showTrace() async {
+    final trace = await AgentPerformanceMetrics.exportJsonl();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rastreamento P0 · JSONL'),
+        content: SizedBox(
+          width: 560,
+          child: SingleChildScrollView(
+            child: SelectableText(trace, style: const TextStyle(fontFamily: 'monospace', fontSize: 10, height: 1.4)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: trace));
+              Navigator.pop(dialogContext);
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Rastreamento copiado.')));
+            },
+            child: const Text('COPIAR'),
+          ),
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('FECHAR')),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final metrics = Map<String, dynamic>.from(_snapshot['metrics'] as Map? ?? {});
+    final enabled = AgentPerformanceMetrics.traceEnabled;
+    return _WorkspacePage(
+      title: 'Desempenho real',
+      description: 'P0: coleta observacional por operação. Não altera a sequência de automação nem executa envios de teste.',
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(color: _panel, border: Border.all(color: _line), borderRadius: BorderRadius.circular(8)),
+            child: Row(children: [
+              Icon(enabled ? Icons.fiber_manual_record : Icons.pause_circle_outline, size: 15, color: enabled ? _accent : _muted),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                enabled ? 'PERF_TRACE ATIVO · JSONL persistente' : 'PERF_TRACE DESATIVADO · somente métricas em memória',
+                style: const TextStyle(fontSize: 9, color: _muted, fontWeight: FontWeight.w700),
+              )),
+              IconButton(onPressed: _loading ? null : _refresh, icon: const Icon(Icons.refresh, size: 18)),
+            ]),
+          ),
+        ),
+        Padding(padding: const EdgeInsets.all(14), child: Row(children: [
+          _card('EXECUÇÕES', (_snapshot['runCount'] ?? 0).toString()),
+          const SizedBox(width: 7),
+          _card('AMOSTRAS', (_snapshot['sampleCount'] ?? 0).toString()),
+          const SizedBox(width: 7),
+          _card('MÉTRICAS', metrics.length.toString()),
+        ])),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Row(children: [
+            const Expanded(child: Text('LATÊNCIA POR OPERAÇÃO', style: TextStyle(fontSize: 9, color: _muted, letterSpacing: 1.2))),
+            TextButton.icon(onPressed: _showTrace, icon: const Icon(Icons.data_object, size: 15), label: const Text('JSONL', style: TextStyle(fontSize: 9))),
+          ]),
+        ),
+        Expanded(child: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : metrics.isEmpty
+            ? const Center(child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Ainda não há amostras. Execute tarefas no NETWORK e atualize este painel.', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: _muted)),
+              ))
+            : ListView(children: metrics.entries.map((entry) {
+                final value = Map<String, dynamic>.from(entry.value as Map);
+                return ListTile(
+                  title: Text(entry.key, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                  subtitle: Text(
+                    '${value['count'] ?? 0} amostras · min ${_ms(value['minMs'])} ms · max ${_ms(value['maxMs'])} ms',
+                    style: const TextStyle(fontSize: 9, color: _muted),
+                  ),
+                  trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text('p50 ${_ms(value['p50Ms'])} ms', style: const TextStyle(fontSize: 10, color: _accent, fontWeight: FontWeight.w700)),
+                    Text('p95 ${_ms(value['p95Ms'])} · p99 ${_ms(value['p99Ms'])}', style: const TextStyle(fontSize: 9, color: _muted)),
+                  ]),
+                );
+              }).toList()),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Text(
+            '${_snapshot['note'] ?? 'Métricas observadas neste processo.'}\nArquivo: ${_snapshot['traceFile'] ?? 'não inicializado'}${_snapshot['traceWriteError'] == null ? '' : '\nFalha ao gravar: ${_snapshot['traceWriteError']}'}',
+            style: const TextStyle(fontSize: 9, color: _muted),
+          ),
+        ),
+      ]),
+    );
   }
 }
 
