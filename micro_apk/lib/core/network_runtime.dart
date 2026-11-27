@@ -1178,6 +1178,7 @@ class ToolAgentService {
       '\nPERCEPÇÃO ANDROID: comece pela ação solicitada usando phone_batch e a resolução de nome/pacote já disponível. NÃO faça auditoria de permissões nem inventário completo em toda tarefa. Consulte phone_list_apps somente se o nome do app for desconhecido/ambíguo ou se o usuário pedir a lista; consulte phone_android_sensitivity na primeira configuração, quando uma ação falhar por permissão ou quando o usuário pedir auditoria. Use a tela que phone_batch já retorna; só chame phone_screen_read novamente se o resultado não trouxer tela útil ou houver ambiguidade. Use OCR autorizado apenas quando a Acessibilidade não expuser o conteúdo necessário. Observe eventos e aja sobre os elementos atuais. Se faltar permissão, explique qual capacidade falta e peça ao usuário para habilitar; nunca tente conceder automaticamente. Nunca diga que viu conteúdo protegido ou inacessível.'+
       '\nAPRENDIZADO DE APLICATIVOS: use app_knowledge_search somente quando o fluxo atual for desconhecido, uma tentativa falhar, houver ambiguidade real ou o usuário pedir explicitamente os fluxos aprendidos. NÃO atrase a primeira ação Android para buscar conhecimento. Ao concluir com sucesso, confira a tela final e grave somente etapas que você realmente observou usando app_knowledge_save com verified=true. Nunca transforme um palpite em habilidade; não guarde mensagens, contatos, senhas ou códigos. As habilidades são dicas: sempre revalide cada alvo na tela atual.'+
       '\nAndroid: use exclusivamente phone_batch para ações que alteram a interface. NÃO espere o aplicativo terminar de carregar. Abra e tente imediatamente os elementos que já estiverem visíveis. Prefira toque por texto usando a árvore de Acessibilidade. Se o controle não tiver rótulo acessível, use tap/swipe/long_press por coordenadas somente quando a tela atual/OCR fornecer posição clara; nunca adivinhe coordenadas. Não use toque por coordenadas para enviar mensagens, pagar, comprar, excluir ou conceder permissões sem autorização específica. Se o alvo ainda não existir, aguarde o evento desse elemento por até 4,5 segundos e então releia a tela. Campo de entrada: tente foco imediato; se ainda não existir, não fique esperando vários segundos — releia o estado e continue quando aparecer. Agrupe passos mecânicos em uma chamada, sem uma nova inferência entre cada toque. A tela pode continuar carregando enquanto você trabalha; use o primeiro estado útil. Ações explicitamente solicitadas pelo usuário, como enviar uma mensagem com destinatário e texto claros, estão autorizadas e não devem gerar pedido de confirmação redundante. Nunca envie mensagem não solicitada. Para pagamentos, transferências, compras, exclusões e concessões de permissões, pare e peça autorização específica. Nunca opere um app em segundo plano com toques globais.'+
+      '\nWHATSAPP: confirme sempre que a janela ativa pertence a com.whatsapp antes de agir. Para sair de uma conversa use phone_press_back uma vez e releia a tela; não toque repetidamente em Voltar nem use Home para navegar dentro do app. Para mudar entre Conversas/Atualizações/Comunidades/Meta AI, use os rótulos e controles de navegação realmente expostos na tela atual; se o toque por texto falhar, releia a árvore e procure contentDescription/ID acessível do controle. Não repita o mesmo rótulo ou swipe sem uma nova leitura que mostre mudança de estado. Para buscar contato, abra a busca visível, foque o campo, digite o nome e confirme que o resultado corresponde ao destinatário antes de abrir. Para enviar, confirme conversa e texto no campo; toque no controle Enviar apenas se o pedido original autorizou a mensagem e verifique a mensagem na conversa depois.'+
       '\nSamsung pop-up: confirme a janela independente com phone_window_list e opere somente pelas ferramentas phone_window_*; não use gestos globais para janela em segundo plano.'+
       '\nDESEMPENHO: quando precisar de várias consultas independentes e somente de leitura, solicite-as no mesmo turno para o executor paralelizar. Não paralelize ações que alterem estado, navegação Android, comandos SSH/shell ou operações com dependência entre si. Evite repetir buscas, inventários e leituras que já estejam válidos no contexto.'+
       '\nWeb, VPS, GitHub e arquivos: escolha a ferramenta adequada, execute o necessário e confira a saída. Ações destrutivas exigem confirmação. Respeite o modo de acesso.'+
@@ -1376,7 +1377,10 @@ class ToolAgentService {
         final rawArgs = function['arguments'];
         final signature = toolName + '|' + (rawArgs is String ? rawArgs.trim() : jsonEncode(rawArgs ?? const {}));
         var identicalRecentCalls = 0;
-        for (final historyMessage in messages) {
+        // Conte apenas tentativas recentes. O histórico inteiro da tarefa causava
+        // falsos bloqueios: voltar a uma aba/tela já visitada é legítimo após
+        // mudanças de estado no Android.
+        for (final historyMessage in messages.reversed.take(12)) {
           final historyCalls = (historyMessage['tool_calls'] as List?) ?? const [];
           for (final historyRaw in historyCalls) {
             try {
@@ -1389,11 +1393,11 @@ class ToolAgentService {
             } catch (_) {}
           }
         }
-        if (identicalRecentCalls >= 2) {
+        if (identicalRecentCalls >= 3) {
           final callId = call['id']?.toString() ?? '';
-          messages.add({'role':'tool','tool_call_id':callId,'content':jsonEncode({'error':'LOOP_GUARD: esta chamada idêntica já foi executada duas vezes. Não execute novamente. Leia o estado atual, tente uma estratégia diferente ou encerre informando o bloqueio.'})});
-          messages.add({'role':'system','content':'LOOP GUARD: a chamada $toolName com os mesmos argumentos foi bloqueada após duas execuções anteriores. Você DEVE mudar a estratégia e observar o estado real; não repita a ferramenta, nem narre que vai repetir. Se for Android, leia a tela atual e tente uma alternativa distinta apenas uma vez; se não houver alternativa viável, pare e informe o bloqueio específico.'});
-          onProgress('Repetição idêntica bloqueada; exigindo estratégia alternativa');
+          messages.add({'role':'tool','tool_call_id':callId,'content':jsonEncode({'error':'LOOP_GUARD: esta chamada idêntica já foi tentada três vezes recentemente sem progresso. Leia a tela atual e mude a estratégia; não repita cegamente.'})});
+          messages.add({'role':'system','content':'LOOP GUARD: três tentativas idênticas recentes foram bloqueadas. Antes de qualquer nova ação Android, leia a tela atual e escolha uma estratégia realmente diferente. Mudanças de tela permitem novas tentativas; não use coordenadas antigas nem repita o mesmo toque sem verificar o estado.'});
+          onProgress('Repetição recente bloqueada; verificando o estado antes de nova estratégia');
           await _saveCheckpoint(prompt, messages);
           continue;
         }
