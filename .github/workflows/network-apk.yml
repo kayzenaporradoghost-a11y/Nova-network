@@ -1,0 +1,225 @@
+name: NETWORK Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'micro_apk/**'
+      - '.github/workflows/network-apk.yml'
+  pull_request:
+    paths:
+      - 'micro_apk/**'
+      - '.github/workflows/network-apk.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  # Apenas a compilação mais recente da branch principal deve consumir runner.
+  # Um push novo cancela builds antigos e evita gastar cota em APKs obsoletos.
+  group: network-apk-main
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free unused runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h
+          # Keep the Android SDK platform/build-tools; remove large images and
+          # unrelated toolchains. Gradle downloads the exact NDK requested by
+          # the project after this cleanup.
+          sudo rm -rf /usr/share/dotnet /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/lib/android/sdk/system-images /usr/local/lib/android/sdk/sources
+          sudo rm -rf /usr/local/lib/android/sdk/ndk/*
+          df -h
+
+      - name: Set up Java 21 for Android Gradle and lint
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare bundled female Brazilian Portuguese neural voice
+        shell: bash
+        run: |
+          set -euo pipefail
+          VOICE_DIR="$GITHUB_WORKSPACE/micro_apk/assets/network_voice"
+          mkdir -p "$VOICE_DIR"
+          cd "$VOICE_DIR"
+          curl -fL --retry 5 --retry-delay 2 "https://huggingface.co/Phoonnx/pipertts_pt-BR_dii/resolve/main/dii_pt-BR.onnx" -o dii_pt-BR.onnx
+          curl -fL --retry 5 --retry-delay 2 "https://huggingface.co/Phoonnx/pipertts_pt-BR_dii/resolve/main/dii_pt-BR.onnx.json" -o dii_pt-BR.onnx.json
+          curl -fL --retry 5 --retry-delay 2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/espeak-ng-data.tar.bz2" -o espeak-ng-data.tar.bz2
+          python -m pip install --upgrade pip
+          python -m pip install onnx==1.17.0
+          python - <<'PY'
+          import json
+          import onnx
+          from pathlib import Path
+
+          root = Path(".")
+          model_path = root / "dii_pt-BR.onnx"
+          config = json.loads((root / "dii_pt-BR.onnx.json").read_text(encoding="utf-8"))
+          with (root / "tokens.txt").open("w", encoding="utf-8") as out:
+              for symbol, ids in config["phoneme_id_map"].items():
+                  out.write(f"{symbol} {ids[0]}\n")
+          model = onnx.load(str(model_path))
+          metadata = {
+              "model_type": "vits",
+              "comment": "piper",
+              "language": "pt_BR",
+              "voice": config["espeak"]["voice"],
+              "has_espeak": 1,
+              "n_speakers": config["num_speakers"],
+              "sample_rate": config["audio"]["sample_rate"],
+          }
+          for key, value in metadata.items():
+              item = model.metadata_props.add()
+              item.key = key
+              item.value = str(value)
+          onnx.save(model, str(model_path))
+          print("Voice model converted for sherpa-onnx.")
+          PY
+          tar -xjf espeak-ng-data.tar.bz2
+          rm -f espeak-ng-data.tar.bz2 dii_pt-BR.onnx.json
+          cd "$GITHUB_WORKSPACE/micro_apk"
+          while IFS= read -r directory; do
+            relative="${directory#./}"
+            printf '    - %s/\n' "$relative" >> pubspec.yaml
+          done < <(find assets/network_voice -mindepth 1 -type d | sort)
+          test -s assets/network_voice/dii_pt-BR.onnx
+          test -s assets/network_voice/tokens.txt
+          test -d assets/network_voice/espeak-ng-data
+          du -sh assets/network_voice
+
+      - name: Prepare Android project scaffolding
+        working-directory: micro_apk
+        run: flutter create --platforms=android --project-name micro_apk .
+
+      - name: Analyze and test Flutter application
+        working-directory: micro_apk
+        run: |
+          flutter pub get
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+          flutter test --reporter expanded
+
+      - name: Configure Android SDK levels for plugins
+        working-directory: micro_apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("android/app/build.gradle.kts")
+          source = path.read_text(encoding="utf-8")
+          min_replacements = (
+              ("minSdk = flutter.minSdkVersion", "minSdk = 26"),
+              ("minSdkVersion flutter.minSdkVersion", "minSdkVersion 26"),
+          )
+          for old, new in min_replacements:
+              if old in source:
+                  source = source.replace(old, new, 1)
+                  print("Configured minSdk 26 for llama_flutter_android.")
+                  break
+          else:
+              if "minSdk = 26" not in source and "minSdkVersion 26" not in source:
+                  raise SystemExit("Could not locate the generated minSdk declaration.")
+          compile_replacements = (
+              ("compileSdk = flutter.compileSdkVersion", "compileSdk = 36"),
+              ("compileSdk flutter.compileSdkVersion", "compileSdk 36"),
+          )
+          for old, new in compile_replacements:
+              if old in source:
+                  source = source.replace(old, new, 1)
+                  print("Configured compileSdk 36 for AndroidX/plugin metadata.")
+                  break
+          else:
+              if "compileSdk = 36" not in source and "compileSdk 36" not in source:
+                  raise SystemExit("Could not locate the generated compileSdk declaration.")
+          path.write_text(source, encoding="utf-8")
+          PY
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          cache = Path.home() / ".pub-cache" / "hosted" / "pub.dev"
+          candidates = list(cache.glob("file_picker-*/android/build.gradle"))
+          if not candidates:
+              raise SystemExit("Could not find file_picker Android Gradle file in pub cache.")
+          patched = []
+          patched = []
+          for path in candidates:
+              source = path.read_text(encoding="utf-8")
+              updated, count = re.subn(
+                  r"(?m)^(\s*(?:compileSdkVersion|compileSdk)\s*(?:=\s*)?).*$",
+                  r"\g<1>36",
+                  source,
+              )
+              if count:
+                  path.write_text(updated, encoding="utf-8")
+                  patched.append(str(path))
+              elif re.search(r"(?m)^\s*(?:compileSdkVersion|compileSdk)\s*=?\s*36\s*$", source):
+                  patched.append(str(path))
+          if len(patched) != len(candidates):
+              raise SystemExit("Could not safely patch compileSdk in every file_picker Android Gradle file.")
+          print("Patched file_picker compileSdk to 36:", *patched, sep="\n")
+          PY
+
+      - name: Add all ML Kit OCR script dependencies for R8
+        working-directory: micro_apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> android/app/build.gradle.kts <<'EOF'
+
+          dependencies {
+              implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+              implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
+              implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+              implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+          }
+          EOF
+
+      - name: Build NETWORK release APK
+        working-directory: micro_apk
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload NETWORK-APK (optional; do not block release when artifact quota is full)
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: NETWORK-APK
+          path: micro_apk/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish installable APK on GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: network-apk-${{ github.run_number }}
+          name: NETWORK APK ${{ github.run_number }}
+          generate_release_notes: false
+          files: micro_apk/build/app/outputs/flutter-apk/app-release.apk
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
