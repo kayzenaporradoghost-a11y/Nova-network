@@ -73,6 +73,27 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
   final ScrollController _chatScroll = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
   final List<PlatformFile> _attachments = [];
+  final List<String> _diagnosticLines = [];
+  bool _diagnosticsEnabled = true;
+
+  void _recordDiagnostic(String event, Map<String, dynamic> data) {
+    if (!_diagnosticsEnabled) return;
+    final stamp = DateTime.now().toIso8601String();
+    final line = jsonEncode({'time': stamp, 'event': event, ...data});
+    _diagnosticLines.add(line);
+    if (_diagnosticLines.length > 5000) _diagnosticLines.removeRange(0, _diagnosticLines.length - 5000);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _copyDiagnostics() async {
+    final report = _diagnosticLines.isEmpty
+        ? 'NETWORK DIAGNOSTICS\\nNenhuma execução registrada ainda.'
+        : 'NETWORK DIAGNOSTICS\\nVersão: 3.2.1+6\\nRegistros: ${_diagnosticLines.length}\\n\\n' + _diagnosticLines.join('\\n');
+    await Clipboard.setData(ClipboardData(text: report));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Diagnóstico copiado: ${_diagnosticLines.length} registros')),
+    );
+  }
   static const _historyKey = 'network_void_conversations_v1';
 
   @override
@@ -229,7 +250,9 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
         images: const [],
         resumeMessages: resumeMessages,
         confirmDangerous: _confirmDangerous,
+        onDiagnostic: _recordDiagnostic,
         onProgress: (value) {
+          _recordDiagnostic('PROGRESS', {'message': value});
           if (mounted) setState(() => _activity = value.toUpperCase());
         },
         onTextChunk: (chunk) {
@@ -248,8 +271,10 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
         },
         openAppFeature: _openFeature,
       );
+      _recordDiagnostic('TASK_SUCCESS', {'durationMs': DateTime.now().difference(DateTime.parse(_diagnosticLines.first.isNotEmpty ? (jsonDecode(_diagnosticLines.first) as Map)['time'] as String : DateTime.now().toIso8601String())).inMilliseconds, 'finalResponse': result});
       if (mounted) setState(() => _messages.last['content'] = result);
     } catch (error) {
+      _recordDiagnostic('TASK_EXCEPTION', {'error': error.toString(), 'stack': StackTrace.current.toString()});
       if (mounted) setState(() {
         final previous = _messages.isNotEmpty ? (_messages.last['content']?.toString() ?? '') : '';
         final failure = 'TAREFA PAUSADA — será retomada quando você iniciar novamente.\\n\\n$error';
@@ -260,6 +285,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
                 : '$previous\\n\\n$failure';
       });
     } finally {
+      _recordDiagnostic('TASK_FINALLY', {'running': false});
       if (mounted) setState(() { _running = false; _activity = 'SISTEMA PRONTO'; });
       await _persist();
       _scrollToEnd();
@@ -506,6 +532,8 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       }
     }
     final request = prompt.isEmpty ? 'Analise os arquivos anexados.' : prompt;
+    _diagnosticLines.clear();
+    _recordDiagnostic('TASK_START', {'prompt': request, 'attachments': files.map((f) => {'name': f.name, 'size': f.size}).toList(), 'executionMode': _executionMode, 'accessMode': _accessMode});
     setState(() {
       _messages.add({'role': 'user', 'content': request + (files.isEmpty ? '' : '\n\nAnexos: ${files.map((f) => f.name).join(', ')}')});
       _messages.add({'role': 'assistant', 'content': ''});
@@ -620,10 +648,44 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
   Widget build(BuildContext context) => Scaffold(
     drawer: _navigationDrawer(),
     body: SafeArea(
-      child: Column(children: [
-        _topBar(),
-        Expanded(child: _section == WorkspaceSection.chat ? _chatView() : _sectionView()),
+      child: Stack(children: [
+        Column(children: [
+          _topBar(),
+          Expanded(child: _section == WorkspaceSection.chat ? _chatView() : _sectionView()),
+        ]),
+        Positioned(right: 10, bottom: 82, child: _diagnosticCopyButton()),
       ]),
+    ),
+  );
+
+  Widget _diagnosticCopyButton() => Material(
+    color: const Color(0xFF171717),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(9),
+      side: BorderSide(color: _running ? VoidDesignSystem.neon.withOpacity(.8) : const Color(0xFF444444)),
+    ),
+    elevation: 5,
+    child: Tooltip(
+      message: 'Copiar diagnóstico completo da execução',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(9),
+        onTap: _copyDiagnostics,
+        onLongPress: () {
+          showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+            title: const Text('Diagnóstico NETWORK'),
+            content: Text('${_diagnosticLines.length} eventos registrados. O relatório inclui etapas, chamadas de ferramentas, tempos, resultados e erros.'),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('FECHAR')), FilledButton.icon(onPressed: () { Navigator.pop(ctx); _copyDiagnostics(); }, icon: const Icon(Icons.copy), label: const Text('COPIAR TUDO'))],
+          ));
+        },
+        child: SizedBox(width: 46, height: 46, child: Stack(alignment: Alignment.center, children: [
+          const Icon(Icons.content_copy, size: 19, color: Color(0xFFEAEAEA)),
+          Positioned(right: 3, top: 3, child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            decoration: BoxDecoration(color: _running ? VoidDesignSystem.neon : const Color(0xFF555555), borderRadius: BorderRadius.circular(8)),
+            child: Text(_diagnosticLines.length > 99 ? '99+' : '${_diagnosticLines.length}', style: const TextStyle(fontSize: 7, color: Colors.white)),
+          )),
+        ])),
+      ),
     ),
   );
 
