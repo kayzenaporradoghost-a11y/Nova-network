@@ -331,7 +331,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
           setState(() => _listening = false);
           // Aguarda o resultado final do plugin antes de enviar o rascunho.
           if (_autoSendVoice && _voiceDraft.trim().isNotEmpty) {
-            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 900));
+            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 1500));
           }
         }
       },
@@ -404,8 +404,9 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       final sessionId = _voiceSessionId;
       await _speech.listen(
         localeId: 'pt_BR',
-        listenFor: const Duration(minutes: 2),
-        pauseFor: const Duration(seconds: 2),
+        listenFor: const Duration(minutes: 5),
+        // Pausas curtas entre frases não devem encerrar a captura.
+        pauseFor: const Duration(seconds: 8),
         onResult: (result) {
           if (!mounted || sessionId != _voiceSessionId) return;
           _voiceDraft = result.recognizedWords.trim();
@@ -416,7 +417,8 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
             );
           });
           if (result.finalResult && _autoSendVoice) {
-            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 250));
+            // Espera o reconhecedor estabilizar o texto final antes de enviar.
+            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 1500));
           }
         },
       );
