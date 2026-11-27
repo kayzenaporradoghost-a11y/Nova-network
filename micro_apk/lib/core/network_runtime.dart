@@ -300,9 +300,9 @@ class ToolAgentService {
     {'type':'function','function':{'name':'local_shell_exec','description':'Executa comandos no Termux do celular para acessar arquivos, scripts, Git, Python e ferramentas locais.','parameters':{'type':'object','properties':{'command':{'type':'string'},'workdir':{'type':'string'}},'required':['command']}}},
     {'type':'function','function':{'name':'open_feature','description':'Abre uma seção do NETWORK: projects, terminal, vps, settings, memory, mcp ou browser.','parameters':{'type':'object','properties':{'feature':{'type':'string'}},'required':['feature']}}},
     {'type':'function','function':{'name':'github_repositories','description':'Lista repositórios GitHub da conta conectada.','parameters':{'type':'object','properties':{}}}},
-    {'type':'function','function':{'name':'phone_open_app_and_read','description':'Dispara a abertura do aplicativo e retorna sem esperar carregamento. Depois use phone_tap_text ou phone_wait_for_text: elas observam eventos de Acessibilidade e agem assim que o elemento necessário aparecer.','parameters':{'type':'object','properties':{'package':{'type':'string'}},'required':['package']}}},
+    {'type':'function','function':{'name':'phone_open_app_and_read','description':'Dispara a abertura do aplicativo e retorna sem bloquear. Depois interaja diretamente com phone_tap_text: a Acessibilidade localiza o elemento quando ele aparecer.','parameters':{'type':'object','properties':{'package':{'type':'string'}},'required':['package']}}},
     {'type':'function','function':{'name':'phone_browser_search','description':'Dispara imediatamente a pesquisa no navegador padrão, sem esperar carregamento completo. Acompanhe a tela pelos eventos de Acessibilidade e interaja assim que o elemento necessário aparecer.','parameters':{'type':'object','properties':{'query':{'type':'string'}},'required':['query']}}},
-    {'type':'function','function':{'name':'phone_batch','description':'Executa de 1 a 10 ações Android sequenciais dentro de UMA chamada, evitando uma nova inferência do modelo entre cada toque/digitação. PREFIRA esta ferramenta para sequências previsíveis (ex.: abrir app, aguardar um rótulo, tocar, focar e digitar). Ações aceitas: tap_text, tap, long_press, swipe, wait_for_text, type_text, focus_input, scroll, press_back, home, recents, notifications, quick_settings, power_dialog, lock_screen, take_screenshot, split_screen, read_screen, open_app, browser_search e ferramentas de janela. Prefira rótulos acessíveis; use coordenadas apenas se a tela/OCR atual mostrar claramente a posição e nunca para ações sensíveis sem autorização. Use wait_for_text somente quando o elemento ainda não estiver presente. Agrupe ações com dependências claras usando os rótulos observados; não faça uma chamada separada do modelo para cada passo mecânico. A execução para no primeiro erro e retorna a tela atual ao final. Envio/publicação é permitido quando o usuário solicitou explicitamente e destinatário/conteúdo estão claros; não peça confirmação redundante. Pagamentos, transferências, compras, exclusões e concessões de permissões exigem autorização específica e nunca entram no lote.','parameters':{'type':'object','properties':{'actions':{'type':'array','minItems':1,'maxItems':10,'items':{'type':'object','properties':{'tool':{'type':'string','enum':['tap_text','tap','long_press','swipe','wait_for_text','type_text','focus_input','scroll','press_back','home','recents','notifications','quick_settings','power_dialog','lock_screen','take_screenshot','split_screen','read_screen','open_app','browser_search','open_app_window','list_windows','window_read','window_tap_text','window_type_text','window_scroll']},'args':{'type':'object'}},'required':['tool','args']}}},'required':['actions']}}},
+    {'type':'function','function':{'name':'phone_batch','description':'Executa de 1 a 10 ações Android sequenciais dentro de UMA chamada, evitando uma nova inferência do modelo entre cada toque/digitação. PREFIRA esta ferramenta para sequências previsíveis (ex.: abrir app, aguardar um rótulo, tocar, focar e digitar). Ações aceitas: tap_text, tap, long_press, swipe, wait_for_text, type_text, focus_input, scroll, press_back, home, recents, notifications, quick_settings, power_dialog, lock_screen, take_screenshot, split_screen, read_screen, open_app, browser_search e ferramentas de janela. Prefira rótulos acessíveis; use coordenadas apenas se a tela/OCR atual mostrar claramente a posição e nunca para ações sensíveis sem autorização. Use wait_for_text somente quando o elemento ainda não estiver presente. Agrupe ações com dependências claras usando os rótulos observados; não faça uma chamada separada do modelo para cada passo mecânico. A execução para no primeiro erro e retorna a tela atual ao final. Envio/publicação é permitido quando o usuário solicitou explicitamente e destinatário/conteúdo estão claros; não peça confirmação redundante. Pagamentos, transferências, compras, exclusões e concessões de permissões exigem autorização específica e nunca entram no lote.','parameters':{'type':'object','properties':{'actions':{'type':'array','minItems':1,'maxItems':10,'items':{'type':'object','properties':{'tool':{'type':'string','enum':['tap_text','tap','long_press','swipe','type_text','focus_input','scroll','press_back','home','recents','notifications','quick_settings','power_dialog','lock_screen','take_screenshot','split_screen','read_screen','open_app','browser_search','open_app_window','list_windows','window_read','window_tap_text','window_type_text','window_scroll']},'args':{'type':'object'}},'required':['tool','args']}}},'required':['actions']}}},
     {'type':'function','function':{'name':'phone_open_app','description':'Abre um aplicativo Android pelo pacote. WhatsApp: com.whatsapp; WhatsApp Business: com.whatsapp.w4b.','parameters':{'type':'object','properties':{'package':{'type':'string'}},'required':['package']}}},
     {'type':'function','function':{'name':'phone_open_app_window','description':'Abre um app em janela independente quando o sistema permitir. COMPATIBILIDADE ANDROID 10/SAMSUNG: inicia o app e abre Recentes; em seguida, continue autonomamente com phone_batch: leia a tela, localize o cartão do app solicitado, abra o menu pelo ícone/controle acessível (não toque no cartão errado), selecione \'Abrir na exibição pop-up\' ou variante visível e confirme com phone_window_list. Se o menu/controle não estiver exposto pela Acessibilidade, não invente sucesso: abra o app em tela normal com phone_open_app e continue controlando a janela ativa por AccessibilityService. No Android 10, a automação da janela ativa funciona sem VirtualDisplay; janela independente depende do suporte One UI/multijanela. Nunca confunda execução com tela ativa com execução visual em segundo plano.','parameters':{'type':'object','properties':{'package':{'type':'string'}},'required':['package']}}},
     {'type':'function','function':{'name':'phone_list_apps','description':'Inventário de aplicativos instalados: nome humano, pacote e se possui lançador. Use para resolver nomes antes de abrir apps; não adivinhe pacotes.','parameters':{'type':'object','properties':{}}}},
@@ -532,11 +532,13 @@ class ToolAgentService {
         _sessionClient = http.Client();
         if (identical(_activeClient, previousClient)) _activeClient = null;
         previousClient.close();
+        // Sem pausa artificial entre tentativas: recria a conexão e tenta imediatamente.
+        // Em HTTP 429, respeita o Retry-After do provedor para não ampliar o bloqueio.
         final retryAfterMatch = RegExp(r'Aguarde pelo menos (\d+)',caseSensitive:false).firstMatch(errorText);
         final retryAfterSeconds = retryAfterMatch == null ? null : int.tryParse(retryAfterMatch.group(1)!);
-        final delayMs = retryAfterSeconds != null ? (retryAfterSeconds * 1000).clamp(500, 10000) : 700 * (retryCount + 1);
-        onProgress('Falha temporária na API; nova tentativa automática ' + (retryCount + 1).toString() + '/2 em ' + (delayMs / 1000).toStringAsFixed(1) + 's');
-        await Future.delayed(Duration(milliseconds: delayMs));
+        if (status == 429 && retryAfterSeconds != null && retryAfterSeconds > 0) {
+          await Future.delayed(Duration(seconds: retryAfterSeconds.clamp(1, 10)));
+        }
         if (_stopped) throw StateError('Execução interrompida pelo usuário.');
         return _streamTurnWithRetry(endpoint:endpoint,model:model,token:token,messages:messages,tools:tools,onTextChunk:onTextChunk,onProgress:onProgress,retryCount:retryCount + 1);
       }
@@ -1212,7 +1214,6 @@ class ToolAgentService {
       }
     }
     if (_stopped) throw StateError('Execução interrompida');
-    onProgress('CONSULTANDO AGENTE');
     final recentContext = messages.where((message) => message['role'] == 'user' || message['role'] == 'assistant')
         .toList().reversed.take(8).map((message) {
           final value = message['content'];
@@ -1242,17 +1243,9 @@ class ToolAgentService {
     while (true) {
       if (_stopped) throw StateError('Execução interrompida pelo usuário.');
       inferenceRounds++;
-      // Tarefas complexas podem exigir muitas iterações. Não interrompa em 16
-      // chamadas; mantenha checkpoints e só aplique um teto alto de segurança.
-      if (inferenceRounds > 128) {
-        await _screenSubscription?.cancel();
-        _screenSubscription = null;
-        await _markCheckpointPaused();
-        try { await _channel.invokeMethod('agent_keep_alive_stop'); } catch (_) {}
-        AgentPerformanceMetrics.record('task.total', taskLatency.elapsed);
-        return 'A tarefa foi pausada após 128 ciclos de segurança. O histórico foi preservado para continuar.';
-      }
-      onProgress('Reavaliando estado e escolhendo próxima ação');
+      // Sem teto artificial de etapas: a tarefa segue até concluir, falhar de verdade
+      // ou receber interrupção explícita do usuário. Checkpoints preservam a retomada.
+
       // O estado já foi salvo antes da chamada de ferramenta e após cada resultado.
       // Não regrave o histórico inteiro aqui: isso duplicava I/O antes de cada inferência.
       // Eventos de tela atualizam o contexto, mas não cancelam HTTP em andamento:
