@@ -1496,3 +1496,30 @@ class _ConnectorsWorkspaceState extends State<ConnectorsWorkspace> {
   }
   Future<void> _connect() async {
     final token = TextEditingController();
+    final accepted = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
+      title: const Text('Conectar GitHub'),
+      content: TextField(controller: token, obscureText: true, decoration: const InputDecoration(labelText: 'Personal access token', hintText: 'ghp_…')),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancelar')),
+        FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Conectar')),
+      ],
+    ));
+    if (accepted != true || token.text.trim().isEmpty) { token.dispose(); return; }
+    setState(() => _busy = true);
+    try { await widget.github.configureToken(token.text.trim()); await _load(); }
+    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('GitHub: $e'))); }
+    finally { token.dispose(); if (mounted) setState(() => _busy = false); }
+  }
+  @override Widget build(BuildContext context) => SectionFrame(kicker: 'INTEGRATIONS / ACCESS', title: 'Conectores', description: 'Contas e serviços autorizados para o agente.', child: ListView(padding: const EdgeInsets.all(16), children: [
+    Container(padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: VoidDesignSystem.panel, border: Border.all(color: VoidDesignSystem.line), borderRadius: BorderRadius.circular(8)),
+      child: Row(children: [
+        const Icon(Icons.code, size: 25, color: VoidDesignSystem.text), const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('GitHub', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 4), Text(_connected ? 'Conectado como @$_account' : 'Autorize o acesso aos seus repositórios.', style: const TextStyle(fontSize: 10, color: VoidDesignSystem.muted)),
+        ])),
+        if (_connected) IconButton(onPressed: () async { await widget.github.disconnect(); if (mounted) setState(() { _connected = false; _account = ''; }); }, icon: const Icon(Icons.link_off))
+        else FilledButton(onPressed: _busy ? null : _connect, child: Text(_busy ? 'AGUARDE' : 'CONECTAR')),
+      ])),
+  ]));
+}
