@@ -73,7 +73,7 @@ internal class UiIndex(private val root: AccessibilityNodeInfo?) {
                 )
             }
             for (i in 0 until node.childCount) {
-                if (output.size >= 60) break
+                // Continua contando a árvore inteira até maxDepth; só a lista emitida é limitada a 60.
                 walk(node.getChild(i), depth + 1)
             }
         }
