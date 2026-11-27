@@ -498,15 +498,21 @@ class ToolAgentService {
     // para um provedor terceiro que não foi escolhido nas configurações.
     // O endpoint/modelo configurados são a única origem de inferência.
     if (_stopped) throw StateError('Execução interrompida pelo usuário.');
+    // Bufferiza cada tentativa: se a conexão cair no meio do SSE, o texto
+    // parcial não é mostrado duas vezes quando a mesma inferência é refeita.
+    final attemptText = StringBuffer();
     try {
-      return await _streamTurn(
+      final message = await _streamTurn(
         endpoint: endpoint,
         model: model,
         token: token,
         messages: messages,
         tools: tools,
-        onTextChunk: onTextChunk,
+        onTextChunk: attemptText.write,
       ).timeout(const Duration(seconds: 180));
+      final completedText = attemptText.toString();
+      if (completedText.isNotEmpty) onTextChunk(completedText);
+      return message;
     } catch (error) {
       if (_stopped) rethrow;
       final errorText = error.toString();
@@ -527,18 +533,21 @@ class ToolAgentService {
       final transientHttpError = status == 408 || status == 425 ||
           status == 429 || status == 500 || status == 502 ||
           status == 503 || status == 504;
-      if (retryCount < 2 && (transientNetworkError || transientHttpError)) {
+      if (retryCount < 3 && (transientNetworkError || transientHttpError)) {
         final previousClient = _sessionClient;
         _sessionClient = http.Client();
         if (identical(_activeClient, previousClient)) _activeClient = null;
         previousClient.close();
-        // Sem pausa artificial entre tentativas: recria a conexão e tenta imediatamente.
-        // Em HTTP 429, respeita o Retry-After do provedor para não ampliar o bloqueio.
+        // Backoff curto para erros de transporte; em 429, respeita Retry-After.
+        // Não muda de provedor nem encaminha o histórico para terceiros.
         final retryAfterMatch = RegExp(r'Aguarde pelo menos (\d+)',caseSensitive:false).firstMatch(errorText);
         final retryAfterSeconds = retryAfterMatch == null ? null : int.tryParse(retryAfterMatch.group(1)!);
         if (status == 429 && retryAfterSeconds != null && retryAfterSeconds > 0) {
           await Future.delayed(Duration(seconds: retryAfterSeconds.clamp(1, 10)));
+        } else {
+          await Future.delayed(Duration(milliseconds: retryCount == 0 ? 450 : 1000));
         }
+        onProgress('Conexão com o provedor caiu; reconectando (' + (retryCount + 1).toString() + '/3)…');
         if (_stopped) throw StateError('Execução interrompida pelo usuário.');
         return _streamTurnWithRetry(endpoint:endpoint,model:model,token:token,messages:messages,tools:tools,onTextChunk:onTextChunk,onProgress:onProgress,retryCount:retryCount + 1);
       }
