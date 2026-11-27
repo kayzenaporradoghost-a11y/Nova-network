@@ -267,23 +267,31 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
   }
 
   Future<bool> _ensureSpeechInitialized() async {
-    if (_speechReady) return true;
+    if (_speechReady && _speech.isAvailable) return true;
     _speechInitialization ??= _speech.initialize(
       onStatus: (status) {
-        final isListening = status == 'listening';
-        if (mounted) setState(() => _listening = isListening);
-        if (isListening) {
+        if (!mounted) return;
+        if (status == 'listening') {
+          setState(() => _listening = true);
           _setFloatingBubbleState('listening');
-        } else if (_autoSendVoice && _voiceDraft.trim().isNotEmpty) {
-          // Fallback: o resultado final pode chegar logo depois do status.
-          _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 400));
+        } else if (status == 'notListening' && _listening) {
+          setState(() => _listening = false);
+          // Aguarda o resultado final do plugin antes de enviar o rascunho.
+          if (_autoSendVoice && _voiceDraft.trim().isNotEmpty) {
+            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 900));
+          }
         }
       },
-      onError: (_) {
+      onError: (error) {
         if (mounted) setState(() => _listening = false);
+        _speechReady = false;
+        _speechInitialization = null;
         if (_autoSendVoice) {
           _autoSendVoice = false;
           _setFloatingBubbleState('error');
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Falha no reconhecimento de voz: ${error.errorMsg}')),
+          );
         }
       },
     );
@@ -292,6 +300,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       if (!_speechReady) _speechInitialization = null;
       return _speechReady;
     } catch (_) {
+      _speechReady = false;
       _speechInitialization = null;
       rethrow;
     }
@@ -302,10 +311,25 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       final shouldAutoSend = _autoSendVoice && autoSend;
       await _speech.stop();
       if (mounted) setState(() => _listening = false);
-      if (shouldAutoSend) {
-        _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 180));
-      }
+      if (shouldAutoSend) _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 500));
       return;
+    }
+
+    // Revalida a permissão a cada acionamento: o usuário pode ter revogado
+    // o microfone nas configurações depois da instalação.
+    final micStatus = await Permission.microphone.status;
+    if (!micStatus.isGranted) {
+      final requested = await Permission.microphone.request();
+      if (!requested.isGranted) {
+        _autoSendVoice = false;
+        await _setFloatingBubbleState('error');
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(requested.isPermanentlyDenied
+            ? 'Microfone bloqueado. Ative a permissão do NETWORK nas configurações do Android.'
+            : 'Permita o microfone para falar com o NETWORK.')),
+        );
+        return;
+      }
     }
 
     _voiceAutoSendTimer?.cancel();
@@ -314,18 +338,21 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     _composer.clear();
     _autoSendVoice = autoSend;
     try {
-      // O reconhecedor fica aquecido entre usos; não inicializa de novo a cada toque.
+      // Limpa uma sessão residual antes de iniciar a nova captura.
+      try { await _speech.stop(); } catch (_) {}
       if (!await _ensureSpeechInitialized()) {
         _autoSendVoice = false;
         await _setFloatingBubbleState('error');
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reconhecimento de voz indisponível neste aparelho.')));
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Reconhecimento de voz indisponível. Verifique o microfone e o serviço de voz do Android.')),
+        );
         return;
       }
       final sessionId = _voiceSessionId;
       await _speech.listen(
         localeId: 'pt_BR',
         listenFor: const Duration(minutes: 2),
-        pauseFor: const Duration(seconds: 1),
+        pauseFor: const Duration(seconds: 2),
         onResult: (result) {
           if (!mounted || sessionId != _voiceSessionId) return;
           _voiceDraft = result.recognizedWords.trim();
@@ -336,13 +363,15 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
             );
           });
           if (result.finalResult && _autoSendVoice) {
-            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 180));
+            _scheduleVoiceAutoSend(delay: const Duration(milliseconds: 250));
           }
         },
       );
       if (mounted) setState(() => _listening = true);
       if (autoSend) await _setFloatingBubbleState('listening');
     } catch (e) {
+      _speechReady = false;
+      _speechInitialization = null;
       _autoSendVoice = false;
       await _setFloatingBubbleState('error');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Voz: $e')));
