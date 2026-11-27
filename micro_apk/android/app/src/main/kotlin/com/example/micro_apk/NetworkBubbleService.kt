@@ -156,6 +156,8 @@ class NetworkBubbleService : Service() {
     private fun animateState() {
         val view = bubble ?: return
         pulse?.cancel()
+        // Bolha fica discreta/transparente fora da gravação; opaca enquanto escuta.
+        view.alpha = if (listening) 1f else 0.28f
         (view.background as? GradientDrawable)?.setColor(Color.BLACK)
         (view.background as? GradientDrawable)?.setStroke(3, Color.WHITE)
         if (listening || working || speaking) {
