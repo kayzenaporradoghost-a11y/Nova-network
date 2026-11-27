@@ -1196,7 +1196,7 @@ class ToolAgentService {
     final availableTools = _availableTools('$prompt\n$recentContext');
     final isAndroidExecutionTask = RegExp(r'android|celular|telefone|smartphone|app|whatsapp|telegram|notifica|permiss[aã]o|acessibilidade|tela|aplicativo|abrir app|toque|digitar|clicar|janela flutuante|pop.?up|aparelho|mobile',caseSensitive:false).hasMatch(prompt);
     final taskNeedsSpecialists = (prompt.trim().length > 220 ||
-      RegExp(r'\\b(pesquis|investig|compar|analis|arquitet|planej|projet|código|codigo|debug|auditor|estrateg|relat[oó]rio|v[aá]rios apps|m[uú]ltipl|complex)\\b',caseSensitive:false).hasMatch(prompt)) && !isAndroidExecutionTask;
+      RegExp(r'\b(pesquis|investig|compar|analis|arquitet|planej|projet|código|codigo|debug|auditor|estrateg|relat[oó]rio|v[aá]rios apps|m[uú]ltipl|complex)\b',caseSensitive:false).hasMatch(prompt)) && !isAndroidExecutionTask;
     if (isAndroidExecutionTask) {
       messages.add({'role':'system','content':'EXECUÇÃO ANDROID ACTION-FIRST: não faça pré-auditoria nem consultas de memória/especialistas antes da primeira ação útil. Comece com phone_batch contendo a abertura do aplicativo/alvo e leitura do estado (o lote retorna a tela ao final). Use phone_list_apps apenas se o nome/pacote não puder ser resolvido, phone_android_sensitivity somente se permissão for explicitamente solicitada ou falhar por permissão, e app_knowledge_search somente se o fluxo estiver desconhecido ou uma tentativa falhar. Para passos mecânicos previsíveis, agrupe-os em um único phone_batch de até 10 ações. Após o lote, observe a tela real e só então replaneje se necessário. Não divida uma sequência previsível em chamadas separadas.'});
     }
