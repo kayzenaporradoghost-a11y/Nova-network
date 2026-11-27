@@ -336,6 +336,8 @@ class NetworkAccessibilityService : AccessibilityService() {
     private fun perform(action: String, args: Map<String, Any?>): Any {
         return when (action) {
             "phone_screen_read" -> readScreen()
+            "phone_ui_index" -> UiIndex(rootInActiveWindow).summary()
+            "phone_execute_batch" -> executeBatch(args)
             "phone_list_apps" -> listApps()
             "phone_tap" -> gesture(number(args, "x"), number(args, "y"), number(args, "x"), number(args, "y"), 90)
             "phone_tap_text" -> tapText(args["text"]?.toString() ?: "")
@@ -423,39 +425,108 @@ class NetworkAccessibilityService : AccessibilityService() {
     }
 
     private fun readScreen(): String {
-        val root = rootInActiveWindow ?: return "A janela atual não disponibilizou elementos para acessibilidade."
-        val output = StringBuilder()
-        output.append("APP: ").append(root.packageName ?: "desconhecido").append('\n')
-        var count = 0
-        fun walk(node: AccessibilityNodeInfo, depth: Int) {
-            if (count >= 120 || depth > 18) return
-            val text = node.text?.toString()?.trim().orEmpty()
-            val description = node.contentDescription?.toString()?.trim().orEmpty()
-            val bounds = Rect()
-            node.getBoundsInScreen(bounds)
-            if ((text.isNotEmpty() || description.isNotEmpty() || node.isClickable || node.isEditable || node.isScrollable) && !bounds.isEmpty) {
-                output.append("ELEMENTO ").append(count + 1)
-                    .append(" texto=").append(text.take(240))
-                    .append(" descrição=").append(description.take(160))
-                    .append(" classe=").append(node.className ?: "")
-                    .append(" bounds=").append(bounds.left).append(',').append(bounds.top)
-                    .append(',').append(bounds.right).append(',').append(bounds.bottom)
-                     .append(" clicável=").append(node.isClickable)
-                    .append(" rolável=").append(node.isScrollable)
-                    .append(" editável=").append(node.isEditable)
-                    .append('\n')
-                count++
-            }
-            for (i in 0 until node.childCount) {
-                val child = node.getChild(i) ?: continue
-                walk(child, depth + 1)
-            }
-        }
-        walk(root, 0)
-        if (count == 0) output.append("Nenhum texto/elemento acessível exposto pelo app atual.")
-        return output.toString().take(16000)
+        val root = rootInActiveWindow ?: return "A janela atual não disponibilizou elementos para acessibilidade.\\nNODE_COUNT_RAW: 0\\nNODE_COUNT_FILTERED: 0"
+        return UiIndex(root).summary()
     }
 
+    // Lotes pequenos executados na thread do AccessibilityService.
+    // Cada passo reconstrói o índice e resolve o seletor contra a árvore viva.
+    private fun executeBatch(args: Map<String, Any?>): Map<String, Any?> {
+        val steps = args["steps"] as? List<*> ?: throw IllegalArgumentException("steps precisa ser uma lista.")
+        require(steps.isNotEmpty() && steps.size <= 6) { "O lote deve conter de 1 a 6 passos." }
+        val completed = mutableListOf<String>()
+        for ((position, raw) in steps.withIndex()) {
+            val step = raw as? Map<*, *> ?: return mapOf("ok" to false, "step" to position, "reason" to "invalid_step", "completed" to completed)
+            val current = UiIndex(rootInActiveWindow)
+            if (!UiAssert.all(current, parseAssertions(step["before"]))) return mapOf("ok" to false, "step" to position, "reason" to "before_assertion", "completed" to completed, "package" to current.packageName)
+            val action = step["action"] as? Map<*, *> ?: return mapOf("ok" to false, "step" to position, "reason" to "invalid_action", "completed" to completed)
+            if (!performIndexedAction(action)) return mapOf("ok" to false, "step" to position, "reason" to "perform_failed_or_ambiguous", "completed" to completed)
+            val after = parseAssertions(step["after"])
+            if (after.isNotEmpty() && !UiAssert.all(UiIndex(rootInActiveWindow), after)) return mapOf("ok" to false, "step" to position, "reason" to "after_assertion", "completed" to completed)
+            completed += (step["label"] as? String)?.take(100) ?: "step_$position"
+        }
+        return mapOf("ok" to true, "completed" to completed, "package" to rootInActiveWindow?.packageName?.toString())
+    }
+
+    private fun parseSelector(raw: Any?): UiSelector {
+        val m = raw as? Map<*, *> ?: throw IllegalArgumentException("selector inválido.")
+        return UiSelector(
+            cls = m["cls"] as? String ?: "",
+            rid = m["rid"] as? String,
+            label = m["label"] as? String,
+            bounds = Rect((m["left"] as? Number)?.toInt() ?: 0, (m["top"] as? Number)?.toInt() ?: 0, (m["right"] as? Number)?.toInt() ?: 0, (m["bottom"] as? Number)?.toInt() ?: 0)
+        )
+    }
+
+    private fun parseAssertions(raw: Any?): List<UiAssertion> {
+        val list = raw as? List<*> ?: return emptyList()
+        return list.map { item ->
+            val m = item as? Map<*, *> ?: throw IllegalArgumentException("assertion inválida.")
+            when (m["kind"] as? String) {
+                "pkg" -> UiAssertion.PackageIs(m["value"]?.toString().orEmpty())
+                "text" -> UiAssertion.TextContains(m["value"]?.toString().orEmpty())
+                "editable" -> UiAssertion.EditableExists(m["value"] as? Boolean ?: false)
+                "exists" -> UiAssertion.ElementExists(parseSelector(m["selector"]))
+                "absent" -> UiAssertion.ElementAbsent(parseSelector(m["selector"]))
+                else -> throw IllegalArgumentException("Tipo de asserção desconhecido.")
+            }
+        }
+    }
+
+    private fun performIndexedAction(action: Map<*, *>): Boolean {
+        return when (action["type"] as? String) {
+            "back" -> performGlobalAction(GLOBAL_ACTION_BACK)
+            "home" -> performGlobalAction(GLOBAL_ACTION_HOME)
+            "open" -> {
+                val pkg = action["package"] as? String ?: return false
+                val launch = packageManager.getLaunchIntentForPackage(pkg) ?: return false
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(launch)
+                true
+            }
+            "tap", "type", "scroll" -> {
+                val selector = parseSelector(action["selector"])
+                val root = rootInActiveWindow ?: return false
+                val (element, ambiguity) = UiIndex(root).resolve(selector)
+                if (element == null || ambiguity != 1) return false
+                val node = findIndexedNode(root, element) ?: return false
+                when (action["type"] as String) {
+                    "tap" -> {
+                        var target: AccessibilityNodeInfo? = node
+                        var depth = 0
+                        while (target != null && depth++ < 12 && !target.isClickable) target = target.parent
+                        target?.takeIf { it.isEnabled && it.isVisibleToUser }?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+                    }
+                    "type" -> {
+                        if (!node.isEditable || !node.isEnabled || !node.isVisibleToUser) return false
+                        val value = action["value"]?.toString() ?: ""
+                        require(value.length <= 5000) { "Texto excede 5000 caracteres." }
+                        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value) })
+                    }
+                    else -> {
+                        if (!node.isScrollable) return false
+                        val forward = (action["direction"] as? String ?: "down").lowercase() in listOf("down", "forward")
+                        node.performAction(if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                    }
+                }
+            }
+            else -> false
+        }
+    }
+
+    private fun findIndexedNode(root: AccessibilityNodeInfo, element: UiElement, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > 6) return null
+        val bounds = Rect().also { root.getBoundsInScreen(it) }
+        val rid = root.viewIdResourceName?.substringAfterLast('/')
+        val label = root.text?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: root.contentDescription?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        if (bounds == element.bounds && root.className?.toString().orEmpty() == element.cls && (element.rid == null || rid == element.rid) && (element.label == null || label == element.label)) return root
+        for (i in 0 until root.childCount) {
+            val child = root.getChild(i) ?: continue
+            findIndexedNode(child, element, depth + 1)?.let { return it }
+        }
+        return null
+    }
     private fun scroll(direction: String): Boolean {
         val forward = when (direction.lowercase()) {
             "down", "forward" -> true
