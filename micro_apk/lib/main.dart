@@ -526,7 +526,36 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     await _persist();
   }
 
-  Future<void> _handleComposerSend() async {\n    if (_running) {\n      await _stopAgent();\n      return;\n    }\n    final prompt = _composer.text.trim();\n    if (prompt.isEmpty && _attachments.isEmpty) {\n      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Digite uma mensagem ou anexe um arquivo.')));\n      return;\n    }\n    try {\n      await _send();\n    } catch (error, stack) {\n      _recordDiagnostic('SEND_PREPARATION_ERROR', {'error': error.toString(), 'stack': stack.toString()});\n      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Não consegui enviar: $error')));\n    }\n  }\n\n  Future<void> _send({bool speakResponse = false, String? promptOverride}) async {
+  Future<void> _handleComposerSend() async {
+    if (_running) {
+      await _stopAgent();
+      return;
+    }
+    final prompt = _composer.text.trim();
+    if (prompt.isEmpty && _attachments.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Digite uma mensagem ou anexe um arquivo.')),
+        );
+      }
+      return;
+    }
+    try {
+      await _send();
+    } catch (error, stack) {
+      _recordDiagnostic('SEND_PREPARATION_ERROR', {
+        'error': error.toString(),
+        'stack': stack.toString(),
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Não consegui enviar: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _send({bool speakResponse = false, String? promptOverride}) async {
     final prompt = (promptOverride ?? _composer.text).trim();
     if (prompt.isEmpty && _attachments.isEmpty) return;
     if (_running) {
