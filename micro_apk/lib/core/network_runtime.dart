@@ -1120,6 +1120,17 @@ class ToolAgentService {
         if (signal != null && !signal.isCompleted) signal.complete(_screenRevision);
       }
     }, onError: (_) {});
+    // Capture the foreground app synchronously at the start of EVERY user request.
+    // The accessibility service keeps receiving Android screen events between requests;
+    // this fresh read prevents short commands such as "send this here" from losing their referent.
+    String initialScreenContext = '';
+    try {
+      final currentScreen = await _channel.invokeMethod<dynamic>('phone_screen_read')
+          .timeout(const Duration(milliseconds:1800));
+      initialScreenContext = currentScreen?.toString() ?? '';
+    } catch (_) {
+      initialScreenContext = '';
+    }
     // Fast-path only a clear, standalone app-open request: no model call, no memory scan.
     // It is disabled for read-only, resumed, contextual, or multi-action requests.
     final directApp = resumeMessages == null && history.isEmpty && images.isEmpty &&
@@ -1160,6 +1171,7 @@ class ToolAgentService {
     final endpoint = await ai.endpoint, model = await ai.model, token = await ai.apiKey;
     final system = (await ai.systemPrompt)+
       '\nVocê é o agente executor do NETWORK. Cumpra o pedido diretamente, sem planos longos nem perguntas desnecessárias. Use ferramentas quando forem necessárias e verifique o resultado real; nunca invente sucesso.'+
+      '\nPERCEPÇÃO CONTEXTUAL CONTÍNUA: trate a tela atual como parte do pedido, mesmo quando o usuário não mencionar o nome do aplicativo. Resolva referências como "aqui", "isso", "esse erro", "essa conversa", "responde ele" e "manda pra cá" usando o aplicativo/janela e conteúdo observados. Antes de decidir, use o snapshot atualizado da tela fornecido nesta solicitação; combine-o com o histórico recente. Se o usuário disser "seus erros" enquanto estiver no ChatGPT, identifique a conversa visível e prepare/envie ali o conteúdo solicitado, sem confundir com outro app. Não invente conteúdo que não esteja visível; atualize a tela se o snapshot estiver vazio, desatualizado ou incompleto. A observação usa Accessibility e só conteúdo que o Android expõe; telas seguras/protegidas podem ocultar dados.'+
       '\nDecida a próxima ação usando o objetivo, o contexto e os resultados reais. Não repita ações concluídas. Para tarefas simples, execute diretamente; em tarefas complexas, consulte até 2 especialistas quando isso ajudar e reavalie decisões após resultados relevantes.'+
       '\nPERCEPÇÃO ANDROID: comece pela ação solicitada usando phone_batch e a resolução de nome/pacote já disponível. NÃO faça auditoria de permissões nem inventário completo em toda tarefa. Consulte phone_list_apps somente se o nome do app for desconhecido/ambíguo ou se o usuário pedir a lista; consulte phone_android_sensitivity na primeira configuração, quando uma ação falhar por permissão ou quando o usuário pedir auditoria. Use a tela que phone_batch já retorna; só chame phone_screen_read novamente se o resultado não trouxer tela útil ou houver ambiguidade. Use OCR autorizado apenas quando a Acessibilidade não expuser o conteúdo necessário. Observe eventos e aja sobre os elementos atuais. Se faltar permissão, explique qual capacidade falta e peça ao usuário para habilitar; nunca tente conceder automaticamente. Nunca diga que viu conteúdo protegido ou inacessível.'+
       '\nAPRENDIZADO DE APLICATIVOS: use app_knowledge_search somente quando o fluxo atual for desconhecido, uma tentativa falhar, houver ambiguidade real ou o usuário pedir explicitamente os fluxos aprendidos. NÃO atrase a primeira ação Android para buscar conhecimento. Ao concluir com sucesso, confira a tela final e grave somente etapas que você realmente observou usando app_knowledge_save com verified=true. Nunca transforme um palpite em habilidade; não guarde mensagens, contatos, senhas ou códigos. As habilidades são dicas: sempre revalide cada alvo na tela atual.'+
@@ -1175,6 +1187,10 @@ class ToolAgentService {
             ...history.map((m)=>{'role':m['role'],'content':m['content']}),
             {'role':'user','content':images.isEmpty ? prompt : <Map<String,dynamic>>[{'type':'text','text':prompt}, ...images.map((image)=>{'type':'image_url','image_url':{'url':'data:'+image['mime']!+';base64,'+image['base64']!}})]}
           ];
+    if (initialScreenContext.trim().isNotEmpty) {
+      final screenContextMessage = {'role':'system','content':'TELA ATUAL OBSERVADA NO INÍCIO DESTA SOLICITAÇÃO (snapshot de Acessibilidade, não inferência):\\n${initialScreenContext.length > 14000 ? initialScreenContext.substring(0,14000) : initialScreenContext}\\nUse este contexto para resolver referências do usuário como aqui/isso/esse erro. Se precisar, atualize com phone_screen_read.'};
+      messages.insert(messages.isNotEmpty && messages.first['role'] == 'system' ? 1 : 0, screenContextMessage);
+    }
     if (resumeMessages == null) {
       final isAndroidTask = RegExp(r'android|celular|telefone|smartphone|app|whatsapp|telegram|notifica|permiss[aã]o|acessibilidade|tela|aplicativo|abrir app|toque|digitar|clicar|janela flutuante|pop.?up|aparelho|mobile',caseSensitive:false).hasMatch(prompt);
       final explicitlyMemoryRelated = RegExp(r'lembra|mem[oó]ria|anterior|da [uú]ltima vez|hist[oó]rico|fluxo aprendido|aprendeu',caseSensitive:false).hasMatch(prompt);
