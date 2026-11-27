@@ -74,14 +74,40 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
   final List<Map<String, dynamic>> _messages = [];
   final List<PlatformFile> _attachments = [];
   final List<String> _diagnosticLines = [];
-  bool _diagnosticsEnabled = true;
+  int _diagnosticCharacters = 0;
+  bool _diagnosticsTruncated = false;
+
+  Object _sanitizeDiagnostic(Object? value) {
+    if (value is Map) {
+      final clean = <String,dynamic>{};
+      for (final entry in value.entries) {
+        final key = entry.key.toString();
+        final lower = key.toLowerCase();
+        clean[key] = (lower.contains('token') || lower.contains('api_key') ||
+            lower.contains('password') || lower.contains('secret') ||
+            lower.contains('authorization') || lower.contains('cookie'))
+            ? '[REDACTED]' : _sanitizeDiagnostic(entry.value);
+      }
+      return clean;
+    }
+    if (value is List) return value.map(_sanitizeDiagnostic).toList();
+    if (value is String) {
+      return value
+          .replaceAll(RegExp(r'(?i)(bearer\\s+)[a-z0-9._-]+'), r'$1[REDACTED]')
+          .replaceAll(RegExp(r'(?i)(api[_-]?key|access[_-]?token|password|secret)(\\s*[:=]\\s*)[^\\s,;]+'), r'$1$2[REDACTED]');
+    }
+    return value ?? 'null';
+  }
 
   void _recordDiagnostic(String event, Map<String, dynamic> data) {
-    if (!_diagnosticsEnabled) return;
     final stamp = DateTime.now().toIso8601String();
-    final line = jsonEncode({'time': stamp, 'event': event, ...data});
+    final line = jsonEncode(_sanitizeDiagnostic({'time': stamp, 'event': event, ...data}));
     _diagnosticLines.add(line);
-    if (_diagnosticLines.length > 5000) _diagnosticLines.removeRange(0, _diagnosticLines.length - 5000);
+    _diagnosticCharacters += line.length;
+    while (_diagnosticLines.length > 3000 || _diagnosticCharacters > 1500000) {
+      _diagnosticCharacters -= _diagnosticLines.removeAt(0).length;
+      _diagnosticsTruncated = true;
+    }
     if (mounted && (event.startsWith('TASK_') || event.startsWith('TOOL_') ||
         event.startsWith('INFERENCE_') || event == 'PROGRESS')) setState(() {});
   }
