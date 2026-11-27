@@ -586,21 +586,25 @@ class ToolAgentService {
   }
 
   Future<List<Map<String,dynamic>>> _searchMemory(String query) async {
+    final trimmed = query.trim();
+    // Fast-path greetings and tiny requests: they rarely need persistent memory.
+    if (trimmed.length <= 20) return const [];
     final directory = await _memoryDirectory();
-    // Keep automatic memory retrieval bounded: a huge note folder must not
-    // turn every short chat message into a slow filesystem scan/context dump.
-    final files = directory.listSync(followLinks:false).whereType<File>().take(200).toList();
-    final terms = query.toLowerCase().split(RegExp(r'[^a-z0-9À-ÿ]+')).where((e) => e.length > 2).toSet();
+    // Prefer recent timestamped notes and cap automatic scans to 60 files.
+    // Read candidates concurrently instead of serially awaiting every file.
+    final files = directory.listSync(followLinks:false).whereType<File>().toList()
+      ..sort((a,b) => b.uri.pathSegments.last.compareTo(a.uri.pathSegments.last));
+    final candidates = files.take(60).toList();
+    final terms = trimmed.toLowerCase().split(RegExp(r'[^a-z0-9À-ÿ]+')).where((e) => e.length > 2).toSet();
     final matches = <Map<String,dynamic>>[];
-    for (final file in files) {
-      try {
-        final content = await file.readAsString();
-        final lower = content.toLowerCase();
-        final score = terms.fold<int>(0, (sum, term) => sum + (lower.split(term).length - 1));
-        if (query.trim().isEmpty || score > 0) {
-          matches.add({'file':file.uri.pathSegments.last,'score':score,'content':content});
-        }
-      } catch (_) { continue; }
+    final contents = await Future.wait(candidates.map((file) async {
+      try { return (file, await file.readAsString()); } catch (_) { return (file, ''); }
+    }));
+    for (final (file, content) in contents) {
+      if (content.isEmpty) continue;
+      final lower = content.toLowerCase();
+      final score = terms.fold<int>(0, (sum, term) => sum + (lower.split(term).length - 1));
+      if (score > 0) matches.add({'file':file.uri.pathSegments.last,'score':score,'content':content});
     }
     matches.sort((a,b) {
       final byScore = (b['score'] as int).compareTo(a['score'] as int);
@@ -1151,10 +1155,16 @@ class ToolAgentService {
           return value is String ? value.substring(0, value.length > 1200 ? 1200 : value.length) : '';
         }).join('\n');
     final availableTools = _availableTools('$prompt\n$recentContext');
-    final specialistRoutingLatency = Stopwatch()..start();
-    final specialistDirectory = AgentOrchestrator.directoryFor(prompt, limit:8);
-    AgentPerformanceMetrics.record('agents.local_routing', specialistRoutingLatency.elapsed);
-    messages.add({'role':'system','content':'CATÁLOGO CONTEXTUAL DE ESPECIALISTAS (130 perfis registrados; candidatos locais mais relevantes para esta tarefa):\n$specialistDirectory\nVocê escolhe se precisa delegar. Para tarefas simples ou urgentes, não delegue. Para tarefas complexas, pode chamar agent_consult com 1 a 2 especialistas independentes, em uma única chamada; eles apenas analisam, não executam ferramentas. Você integra as opiniões e permanece como único coordenador das ações. Se o usuário pedir métricas de desempenho, consulte agent_performance_report e apresente amostras e p50/p95 reais; nunca invente medições nem prometa 10 ms ponta a ponta.'});
+    final taskNeedsSpecialists = prompt.trim().length > 220 ||
+      RegExp(r'\\b(pesquis|investig|compar|analis|arquitet|planej|projet|código|codigo|debug|auditor|estrateg|relat[oó]rio|v[aá]rios apps|m[uú]ltipl|complex)\\b',caseSensitive:false).hasMatch(prompt);
+    if (taskNeedsSpecialists) {
+      final specialistRoutingLatency = Stopwatch()..start();
+      final specialistDirectory = AgentOrchestrator.directoryFor(prompt, limit:5);
+      AgentPerformanceMetrics.record('agents.local_routing', specialistRoutingLatency.elapsed);
+      messages.add({'role':'system','content':'CATÁLOGO DE ESPECIALISTAS (somente se trouxer benefício real; até 1–2 consultas paralelas):\n$specialistDirectory\nEspecialistas apenas aconselham; você continua coordenando e executando. Para tarefa simples/urgente não delegue. Se métricas forem solicitadas, use agent_performance_report e apresente medições reais.'});
+    } else {
+      messages.add({'role':'system','content':'Especialistas estão disponíveis via agent_consult, mas não consulte em tarefa simples ou urgente. Delegue apenas se reduzir risco ou melhorar significativamente o resultado.'});
+    }
     messages.add({'role':'system','content':'REGRA ANDROID: phone_batch é a única ferramenta para alterar a interface. Agrupe até 10 passos mecânicos previsíveis. Abrir aplicativos, navegar, focar campos e digitar não exigem confirmação extra. Se o usuário solicitou explicitamente uma mensagem e o destinatário/texto estão claros, enviar essa mensagem faz parte da autorização dada pelo usuário: não peça uma segunda confirmação. Não envie conteúdo diferente nem para outro destinatário. Pagamentos, transferências, compras, exclusões e permissões sempre exigem autorização específica.'});
     var inferenceRounds = 0;
     var lastKnowledgePackage = '';
