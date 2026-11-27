@@ -497,8 +497,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     } catch (_) {}
   }
 
-  Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> _persist() async {    final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_historyKey, jsonEncode(_messages));
   }
 
@@ -680,7 +679,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
           _topBar(),
           Expanded(child: _section == WorkspaceSection.chat ? _chatView() : _sectionView()),
         ]),
-        Positioned(right: 10, bottom: 82, child: _diagnosticCopyButton()),
+
       ]),
     ),
   );
@@ -704,8 +703,8 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
             actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('FECHAR')), FilledButton.icon(onPressed: () { Navigator.pop(ctx); _copyDiagnostics(); }, icon: const Icon(Icons.copy), label: const Text('COPIAR TUDO'))],
           ));
         },
-        child: SizedBox(width: 46, height: 46, child: Stack(alignment: Alignment.center, children: [
-          const Icon(Icons.content_copy, size: 19, color: Color(0xFFEAEAEA)),
+        child: SizedBox(width: 30, height: 30, child: Stack(alignment: Alignment.center, children: [
+          const Icon(Icons.content_copy, size: 15, color: Color(0xFFEAEAEA)),
           Positioned(right: 3, top: 3, child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(color: _running ? VoidDesignSystem.neon : const Color(0xFF555555), borderRadius: BorderRadius.circular(8)),
@@ -905,6 +904,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
           Padding(padding: const EdgeInsets.fromLTRB(7, 0, 7, 6), child: Row(children: [
             _composerAction(Icons.add, 'Adicionar anexo', _running ? null : _pickFiles),
             _composerAction(_listening ? Icons.mic : Icons.mic_none, _listening ? 'Parar ditado' : 'Ditado em português', _running ? null : _toggleVoiceInput),
+            _diagnosticCopyButton(),
             const Spacer(),
             SizedBox(width: 30, height: 30, child: FilledButton(
               onPressed: _running ? _stopAgent : _send,
@@ -997,8 +997,7 @@ class SectionFrame extends StatelessWidget {
   final String kicker, title, description;
   final Widget child;
   @override Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Padding(padding: const EdgeInsets.fromLTRB(20, 25, 20, 18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(kicker, style: const TextStyle(fontSize: 9, color: VoidDesignSystem.neon, fontWeight: FontWeight.w900, letterSpacing: 2)),
+    Padding(padding: const EdgeInsets.fromLTRB(20, 25, 20, 18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [      Text(kicker, style: const TextStyle(fontSize: 9, color: VoidDesignSystem.neon, fontWeight: FontWeight.w900, letterSpacing: 2)),
       const SizedBox(height: 9), Text(title, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -.8)),
       const SizedBox(height: 7), Text(description, style: const TextStyle(fontSize: 12, color: VoidDesignSystem.muted, height: 1.5)),
     ])),
