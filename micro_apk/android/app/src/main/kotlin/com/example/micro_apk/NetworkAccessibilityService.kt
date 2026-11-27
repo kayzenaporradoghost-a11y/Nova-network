@@ -337,7 +337,8 @@ class NetworkAccessibilityService : AccessibilityService() {
         return when (action) {
             "phone_screen_read" -> readScreen()
             "phone_ui_index" -> UiIndex(rootInActiveWindow).summary()
-            "phone_execute_batch" -> { if (!featureFlag("FF_BATCH")) throw IllegalStateException("FF_BATCH está desligada."); executeBatch(args) }\n            "phone_set_perf_flags" -> setPerformanceFlags(args)
+            "phone_execute_batch" -> { if (!featureFlag("FF_BATCH")) throw IllegalStateException("FF_BATCH está desligada."); executeBatch(args) }
+            "phone_set_perf_flags" -> setPerformanceFlags(args)
             "phone_list_apps" -> listApps()
             "phone_tap" -> gesture(number(args, "x"), number(args, "y"), number(args, "x"), number(args, "y"), 90)
             "phone_tap_text" -> tapText(args["text"]?.toString() ?: "")
