@@ -498,7 +498,6 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
       await _voicePlayer.play(DeviceFileSource(wav));
     } catch (_) {}
   }
-
   Future<void> _persist() async {    final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_historyKey, jsonEncode(_messages));
   }
@@ -527,7 +526,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
     await _persist();
   }
 
-  Future<void> _send({bool speakResponse = false, String? promptOverride}) async {
+  Future<void> _handleComposerSend() async {\n    if (_running) {\n      await _stopAgent();\n      return;\n    }\n    final prompt = _composer.text.trim();\n    if (prompt.isEmpty && _attachments.isEmpty) {\n      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Digite uma mensagem ou anexe um arquivo.')));\n      return;\n    }\n    try {\n      await _send();\n    } catch (error, stack) {\n      _recordDiagnostic('SEND_PREPARATION_ERROR', {'error': error.toString(), 'stack': stack.toString()});\n      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Não consegui enviar: $error')));\n    }\n  }\n\n  Future<void> _send({bool speakResponse = false, String? promptOverride}) async {
     final prompt = (promptOverride ?? _composer.text).trim();
     if (prompt.isEmpty && _attachments.isEmpty) return;
     if (_running) {
@@ -902,14 +901,14 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
           TextField(controller: _composer, enabled: !_running, minLines: 1, maxLines: 5,
             style: const TextStyle(fontSize: 12, height: 1.5, color: Color(0xFFEEEEEE)),
             textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(hintText: 'Faça qualquer coisa', border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none, fillColor: Colors.transparent, contentPadding: EdgeInsets.fromLTRB(13, 12, 13, 6))),
+            decoration: const InputDecoration(hintText: 'Faça qualquer coisa', border: InputBorder.none, enabledBorder: InputBorder.none, focusedBorder: InputBorder.none, fillColor: Colors.transparent, contentPadding: EdgeInsets.fromLTRB(13, 12, 13, 6)), onSubmitted: (_) => _handleComposerSend()),
           Padding(padding: const EdgeInsets.fromLTRB(7, 0, 7, 6), child: Row(children: [
             _composerAction(Icons.add, 'Adicionar anexo', _running ? null : _pickFiles),
             _composerAction(_listening ? Icons.mic : Icons.mic_none, _listening ? 'Parar ditado' : 'Ditado em português', _running ? null : _toggleVoiceInput),
             _diagnosticCopyButton(),
             const Spacer(),
             SizedBox(width: 30, height: 30, child: FilledButton(
-              onPressed: _running ? _stopAgent : _send,
+              onPressed: _running ? _stopAgent : _handleComposerSend,
               style: FilledButton.styleFrom(backgroundColor: const Color(0xFFEEEEEE), foregroundColor: const Color(0xFF171717), padding: EdgeInsets.zero, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6))),
               child: Icon(_running ? Icons.stop_rounded : Icons.arrow_upward, size: 16))),
           ])),
@@ -997,8 +996,7 @@ class _NetworkWorkspaceState extends State<NetworkWorkspace> with WidgetsBinding
 class SectionFrame extends StatelessWidget {
   const SectionFrame({super.key, required this.kicker, required this.title, required this.description, required this.child});
   final String kicker, title, description;
-  final Widget child;
-  @override Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+  final Widget child;  @override Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
     Padding(padding: const EdgeInsets.fromLTRB(20, 25, 20, 18), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [      Text(kicker, style: const TextStyle(fontSize: 9, color: VoidDesignSystem.neon, fontWeight: FontWeight.w900, letterSpacing: 2)),
       const SizedBox(height: 9), Text(title, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -.8)),
       const SizedBox(height: 7), Text(description, style: const TextStyle(fontSize: 12, color: VoidDesignSystem.muted, height: 1.5)),
@@ -1498,30 +1496,3 @@ class _ConnectorsWorkspaceState extends State<ConnectorsWorkspace> {
   }
   Future<void> _connect() async {
     final token = TextEditingController();
-    final accepted = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
-      title: const Text('Conectar GitHub'),
-      content: TextField(controller: token, obscureText: true, decoration: const InputDecoration(labelText: 'Personal access token', hintText: 'ghp_…')),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancelar')),
-        FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Conectar')),
-      ],
-    ));
-    if (accepted != true || token.text.trim().isEmpty) { token.dispose(); return; }
-    setState(() => _busy = true);
-    try { await widget.github.configureToken(token.text.trim()); await _load(); }
-    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('GitHub: $e'))); }
-    finally { token.dispose(); if (mounted) setState(() => _busy = false); }
-  }
-  @override Widget build(BuildContext context) => SectionFrame(kicker: 'INTEGRATIONS / ACCESS', title: 'Conectores', description: 'Contas e serviços autorizados para o agente.', child: ListView(padding: const EdgeInsets.all(16), children: [
-    Container(padding: const EdgeInsets.all(15), decoration: BoxDecoration(color: VoidDesignSystem.panel, border: Border.all(color: VoidDesignSystem.line), borderRadius: BorderRadius.circular(8)),
-      child: Row(children: [
-        const Icon(Icons.code, size: 25, color: VoidDesignSystem.text), const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('GitHub', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4), Text(_connected ? 'Conectado como @$_account' : 'Autorize o acesso aos seus repositórios.', style: const TextStyle(fontSize: 10, color: VoidDesignSystem.muted)),
-        ])),
-        if (_connected) IconButton(onPressed: () async { await widget.github.disconnect(); if (mounted) setState(() { _connected = false; _account = ''; }); }, icon: const Icon(Icons.link_off))
-        else FilledButton(onPressed: _busy ? null : _connect, child: Text(_busy ? 'AGUARDE' : 'CONECTAR')),
-      ])),
-  ]));
-}
